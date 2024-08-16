@@ -447,6 +447,10 @@ def training(rank, conf, output_dir, args):
                         if param.grad is None and param.requires_grad:
                             print(f"param {name} has no gradient.")
                             detected_anomaly = True
+                        if param.grad is not None and param.requires_grad:
+                            if torch.isnan(param.grad).any():
+                                print(f"param {name} has Nan gradient.")
+                                detected_anomaly = True
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
                 if conf.train.get("clip_grad", None):
@@ -511,13 +515,13 @@ def training(rank, conf, output_dir, args):
             del pred, data, loss, losses
 
             # Run validation
-            if (
-                (
-                    it % conf.train.eval_every_iter == 0
-                    and (it > 0 or epoch == -int(args.no_eval_0))
-                )
-                or stop
-                or it == (len(train_loader) - 1)
+            if (False
+                # (
+                #     it % conf.train.eval_every_iter == 0
+                #     and (it > 0 or epoch == -int(args.no_eval_0))
+                # )
+                # or stop
+                # or it == (len(train_loader) - 1)
             ):
                 with fork_rng(seed=conf.train.seed):
                     results, pr_metrics, figures = do_evaluation(
@@ -599,21 +603,21 @@ def training(rank, conf, output_dir, args):
             if stop:
                 break
 
-        if rank == 0:
-            best_eval = save_experiment(
-                model,
-                optimizer,
-                lr_scheduler,
-                conf,
-                losses_,
-                results,
-                best_eval,
-                epoch,
-                tot_it,
-                output_dir=output_dir,
-                stop=stop,
-                distributed=args.distributed,
-            )
+        # if rank == 0:
+        #     best_eval = save_experiment(
+        #         model,
+        #         optimizer,
+        #         lr_scheduler,
+        #         conf,
+        #         losses_,
+        #         results,
+        #         best_eval,
+        #         epoch,
+        #         tot_it,
+        #         output_dir=output_dir,
+        #         stop=stop,
+        #         distributed=args.distributed,
+        #     )
 
         epoch += 1
 

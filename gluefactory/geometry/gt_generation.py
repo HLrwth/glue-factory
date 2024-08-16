@@ -12,8 +12,9 @@ UNMATCHED_FEATURE = -1
 
 @torch.no_grad()
 def gt_matches_from_pose_depth(
-    kp0, kp1, data, pos_th=3, neg_th=5, epi_th=None, cc_th=None, **kw
+    kp0, kp1, data, pos_th=3, neg_th=5, epi_th=None, cc_th=None, min_depth=0, relaxed_bd=0, **kw
 ):
+    assert kp0.shape[1] != 0 and kp1.shape[1] != 0
     if kp0.shape[1] == 0 or kp1.shape[1] == 0:
         b_size, n_kp0 = kp0.shape[:2]
         n_kp1 = kp1.shape[1]
@@ -45,9 +46,17 @@ def gt_matches_from_pose_depth(
     )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
 
+    print(camera0.size, camera0.size.shape)
+    valid0_1 = valid0 & (d0 > min_depth) & torch.all((kp0_1 >= -relaxed_bd) & (kp0_1 <= (camera1.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
+    valid1_0 = valid1 & (d1 > min_depth) & torch.all((kp1_0 >= -relaxed_bd) & (kp1_0 <= (camera0.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
+    
+    res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
+    res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
+
     # build a distance matrix of size [... x M x N]
-    dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
-    dist1 = torch.sum((kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2, -1)
+    dist0 = torch.sum(res0_1_sq, -1)
+    dist1 = torch.sum(res1_0_sq, -1)
+
     dist = torch.max(dist0, dist1)
     inf = dist.new_tensor(float("inf"))
     dist = torch.where(mask_visible, dist, inf)
@@ -103,11 +112,16 @@ def gt_matches_from_pose_depth(
         "proj_1to0": kp1_0,
         "visible0": visible0,
         "visible1": visible1,
+        "valid0_1": valid0_1,
+        "valid1_0": valid1_0,
+        "res0_1_sq": res0_1_sq,
+        "res1_0_sq": res1_0_sq,
     }
 
 
 @torch.no_grad()
 def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
+    assert kp0.shape[1] != 0 and kp1.shape[1] != 0
     if kp0.shape[1] == 0 or kp1.shape[1] == 0:
         b_size, n_kp0 = kp0.shape[:2]
         n_kp1 = kp1.shape[1]
@@ -120,9 +134,15 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     kp0_1 = warp_points_torch(kp0, H, inverse=False)
     kp1_0 = warp_points_torch(kp1, H, inverse=True)
 
+    valid0_1 = torch.ones_like(kp0_1[..., 0])
+    valid1_0 = torch.ones_like(kp1_0[..., 0])
+
+    res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
+    res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
+
     # build a distance matrix of size [... x M x N]
-    dist0 = torch.sum((kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2, -1)
-    dist1 = torch.sum((kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2, -1)
+    dist0 = torch.sum(res0_1_sq, -1)
+    dist1 = torch.sum(res1_0_sq, -1)
     dist = torch.max(dist0, dist1)
 
     reward = (dist < pos_th**2).float() - (dist > neg_th**2).float()
@@ -158,6 +178,10 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         "matching_scores1": (m1 > -1).float(),
         "proj_0to1": kp0_1,
         "proj_1to0": kp1_0,
+        "valid0_1": valid0_1,
+        "valid1_0": valid1_0,
+        "res0_1_sq": res0_1_sq,
+        "res1_0_sq": res1_0_sq,
     }
 
 
