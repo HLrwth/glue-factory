@@ -6,4 +6,5 @@
 /venv/
 /data/
 /outputs/
+/ckpt/
 __pycache__
