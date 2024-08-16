@@ -22,6 +22,8 @@ class DepthMatcher(BaseModel):
         "th_negative": 5.0,
         "th_epi": None,  # add some more epi outliers
         "th_consistency": None,  # check for projection consistency in px
+        "min_depth": 0.0,
+        "relaxed_bd": 0,
         # GT parameters for lines
         "use_lines": False,
         "n_line_sampled_pts": 50,
@@ -66,6 +68,8 @@ class DepthMatcher(BaseModel):
                 neg_th=self.conf.th_negative,
                 epi_th=self.conf.th_epi,
                 cc_th=self.conf.th_consistency,
+                min_depth=self.conf.min_depth,
+                relaxed_bd=self.conf.relaxed_bd,
                 **kw,
             )
         if self.conf.use_lines:
