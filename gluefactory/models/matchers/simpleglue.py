@@ -22,32 +22,40 @@ class EmCrossEntropyLoss(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, pred, data, res_sq=None):
+    def forward(self, pred, data):
         res0_1_sq = data["gt_res0_1_sq"]
         valid0_1 = data['gt_valid0_1']
         p_rp_01 = pred["p_rp_01"]
-        logvar_01 = pred['logvar_01']
-        res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
-        res0_1_sq = res0_1_sq.mean(-1)
-        # res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1)
-        valid0_1_num = valid0_1.sum(-1).clamp(min=1.0)
-        loss_rp_01 = (res0_1_sq * valid0_1).sum(-1) / valid0_1_num
-        loss_logvar_01 = (logvar_01.mean(-1) * valid0_1).sum(-1) / valid0_1_num
 
         res1_0_sq = data["gt_res1_0_sq"]
         valid1_0 = data['gt_valid1_0']
         p_rp_10 = pred["p_rp_10"]
+
+        logvar_01 = pred['logvar_01']
         logvar_10 = pred['logvar_10']
 
-        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-2)
-        res1_0_sq = res1_0_sq.mean(-1)
-        # res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1)
+        if not data.get('tr_logvar'):
+            logvar_01 = logvar_01.new_tensor(0)
+            logvar_10 = logvar_10.new_tensor(0)
+
+        # frame0 to frame1
+        res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
+        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1)
+        # res0_1_sq = res0_1_sq.mean(-1)
+        valid0_1_num = valid0_1.sum(-1).clamp(min=1.0)
+        loss_rp_01 = (res0_1_sq * valid0_1).sum(-1) / valid0_1_num
+        loss_logvar_01 = (logvar_01.mean(-1) * valid0_1).sum(-1) / valid0_1_num
+
+        # frame1 to frame0
+        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-3)
+        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1)
+        # res1_0_sq = res1_0_sq.mean(-1)
         valid1_0_num = valid1_0.sum(-1).clamp(min=1.0)
         loss_rp_10 = (res1_0_sq * valid1_0).sum(-1) /valid1_0_num
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
 
         loss_rp_all = (loss_rp_01 + loss_rp_10) / 2.0
-        loss_logvar_all = 0 *  (loss_logvar_01 + loss_logvar_10) / 2.0
+        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) / 2.0
 
         return loss_rp_all, loss_logvar_all
 
@@ -290,10 +298,17 @@ class TransformerLayer(nn.Module):
 
 
 def double_softmax(sim: torch.Tensor) -> torch.Tensor:
-    scores0 = F.softmax(sim, 2)
-    scores1 = F.softmax(sim.transpose(-1, -2).contiguous(), 2).transpose(-1, -2)
+    scores0 = F.softmax(sim - sim.max(2, keepdim=True).values, 2)
+    sim_t = sim.transpose(-1, -2).contiguous()
+    scores1 = F.softmax(sim_t - sim_t.max(2, keepdim = True).values, 2).transpose(-1, -2)
     scores = scores0 * scores1
     return scores
+
+def check_grad(grad):
+    if torch.isnan(grad).any():
+        print("NaN in gradients!")
+    if torch.isinf(grad).any():
+        print("Inf in gradients!")
 
 class ReprojLikelihood(nn.Module):
     def __init__(self, dim: int) -> None:
@@ -311,9 +326,14 @@ class ReprojLikelihood(nn.Module):
 
         # scores = double_softmax(sim)
         # sim = scores * sim
-        
-        p_rp_01 = F.softmax(sim, 2)
-        p_rp_10 = F.softmax(sim.transpose(-1, -2).contiguous(), 2).transpose(-1, -2)
+
+        # numerical stable softmax
+        p_rp_01 = F.softmax((sim - sim.max(2, keepdim=True).values), 2)
+        # p_rp_01.register_hook(check_grad)
+        sim_t = sim.transpose(-1, -2).contiguous()
+        p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2).transpose(-1, -2)
+        # p_rp_10.register_hook(check_grad)
+
 
         logvar_01 = self.logvar_proj(desc0)
         logvar_10 = self.logvar_proj(desc1)
