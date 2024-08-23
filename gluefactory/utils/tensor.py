@@ -11,7 +11,7 @@ string_classes = (str, bytes)
 
 
 def map_tensor(input_, func):
-    if isinstance(input_, string_classes):
+    if isinstance(input_, string_classes) or isinstance(input_, bool):
         return input_
     elif isinstance(input_, collections.Mapping):
         return {k: map_tensor(sample, func) for k, sample in input_.items()}

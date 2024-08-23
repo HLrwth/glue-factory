@@ -315,6 +315,12 @@ class ReprojLikelihood(nn.Module):
         super().__init__()
         self.dim = dim
         self.logvar_proj = nn.Linear(dim, 2, bias=True)
+        # self.logvar_proj = nn.Sequential(
+        #     nn.Linear(dim, dim),
+        #     nn.GELU(),
+        #     nn.Linear(dim, 2)
+        # )
+
         self.final_proj = nn.Linear(dim, dim, bias=True)
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
