@@ -1,0 +1,49 @@
+data:
+    name: tartanair
+    data_dir: TartanAir
+    info_file: TartanAir.pickle
+    batch_size: 1
+    num_workers: 1
+    fmin: 1
+    fmax: 100
+    load_features:
+        do: false  # enable this if you have cached predictions
+        path: exports/megadepth-undist-depth-r1024_SP-k2048-nms3/{scene}.h5
+        padding_length: 2048
+        padding_fn: pad_local_features
+model:
+    name: two_view_pipeline
+    extractor:
+        name: gluefactory_nonfree.superpoint
+        max_num_keypoints: 512
+        force_num_keypoints: True
+        detection_threshold: 0.0
+        nms_radius: 3
+        trainable: False
+    ground_truth:
+        name: matchers.depth_matcher
+        th_positive: 3
+        th_negative: 5
+        th_epi: 5
+        min_depth: 1e-4
+        relaxed_bd: 640
+    matcher:
+        name: matchers.simpleglue
+        filter_threshold: 0.1
+        logvar_filter_threshold: 1
+        flash: false
+        checkpointed: false
+train:
+    seed: 0
+    epochs: 10000
+    log_every_iter: 1
+    eval_every_iter: 500
+    lr: 0.00008
+    clip_grad: 10
+    lr_schedule:
+        start: 20
+        # type: exp
+        on_epoch: true
+        exp_div_10: 40
+    dataset_callback_fn: sample_new_items
+    plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
