@@ -45,8 +45,6 @@ def gt_matches_from_pose_depth(
         kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
     )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
-
-    print(camera0.size, camera0.size.shape)
     valid0_1 = valid0 & (d0 > min_depth) & torch.all((kp0_1 >= -relaxed_bd) & (kp0_1 <= (camera1.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
     valid1_0 = valid1 & (d1 > min_depth) & torch.all((kp1_0 >= -relaxed_bd) & (kp1_0 <= (camera0.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
     
