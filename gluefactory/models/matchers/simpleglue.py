@@ -438,6 +438,8 @@ class SimpleGlue(nn.Module):
                     str(DATA_PATH / conf.weights), map_location="cpu"
                 )
             else:
+                if 'lightglue' in conf.weights:
+                    self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
                 fname = (
                     f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
                     + ".pth"
@@ -449,12 +451,17 @@ class SimpleGlue(nn.Module):
 
         if state_dict:
             # rename old state dict entries
-            for i in range(self.conf.n_layers):
-                pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
-                state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-                pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
-                state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-            self.load_state_dict(state_dict, strict=False)
+            if 'lightglue' in conf.weights:
+                for i in range(self.conf.n_layers):
+                    pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
+                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                    pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
+                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+
+                state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
+                print("Load state dict from lightglue!")
+
+                self.load_state_dict(state_dict, strict=False)
 
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:

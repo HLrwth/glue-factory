@@ -1,10 +1,10 @@
 GPUS=1
 
 executable = /home/hli/glue-factory/train_scripts/cluster_train.sh 
-arguments = sp+sg_homography
-error = /is/cluster/fast/hli/glue/outputs/training/homography_rpj.err
-output = /is/cluster/fast/hli/glue/outputs/training/homography_rpj.out
-log = /is/cluster/fast/hli/glue/outputs/training/homography_rpj.log
+arguments = sp+sg_homography_initlg_onecyclelr
+error = /is/cluster/fast/hli/glue/outputs/training/homography_rpj_initlg_onecyclelr.err
+output = /is/cluster/fast/hli/glue/outputs/training/homography_rpj_initlg_onecyclelr.out
+log = /is/cluster/fast/hli/glue/outputs/training/homography_rpj_initlg_onecyclelr.log
 
 # CPU and memory requirement
 request_cpus = 16
