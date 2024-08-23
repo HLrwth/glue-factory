@@ -41,6 +41,7 @@ from .utils.tools import (
 default_train_conf = {
     "seed": "???",  # training seed
     "epochs": 1,  # number of epochs
+    "start_epoch_tr_logvar": 0,  # epoch to start training logvar
     "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
     "opt_regexp": None,  # regular expression to filter parameters to optimize
     "optimizer_options": {},  # optional arguments passed to the optimizer
@@ -454,6 +455,9 @@ def training(rank, conf, output_dir, args):
                         conf.train.seed + epoch
                     )
         for it, data in enumerate(train_loader):
+            data.update({'tr_logvar': False})
+            if epoch >= conf.train.start_epoch_tr_logvar:
+                data.update({'tr_logvar': True})
             tot_it = (len(train_loader) * epoch + it) * (
                 args.n_gpus if args.distributed else 1
             )
@@ -496,10 +500,6 @@ def training(rank, conf, output_dir, args):
                         if param.grad is None and param.requires_grad:
                             print(f"param {name} has no gradient.")
                             detected_anomaly = True
-                        if param.grad is not None and param.requires_grad:
-                            if torch.isnan(param.grad).any():
-                                print(f"param {name} has Nan gradient.")
-                                detected_anomaly = True
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
                 if conf.train.get("clip_grad", None):
