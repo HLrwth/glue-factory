@@ -183,10 +183,8 @@ class RGBDAugmentor:
 
     def color_transform(self, images):
         """ color jittering """
-        num, ch, ht, wd = images.shape
-        images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd*num)
-        images = 255 * self.augcolor(images[[2,1,0]] / 255.0)
-        return images[[2,1,0]].reshape(ch, ht, wd, num).permute(3,0,1,2).contiguous()
+        images = self.augcolor(images)
+        return images
 
     def __call__(self, images, depths, intrinsics):
         if np.random.rand() < 0.5:
@@ -242,25 +240,28 @@ class _Dataset(torch.utils.data.Dataset):
         self.scene_info = \
             pickle.load(open(scene_info_file, 'rb'))[0]
         
-        self.scene_index = {}
+        self.scene_index_train = {}
+        self.scene_index_val = {}
         for scene in self.scene_info:
-            if not is_test_scene(scene):
-                graph = self.scene_info[scene]['graph']
-                inx_list = []
-                for i in graph:
-                    if i < len(graph) - 65:
-                        inx_list.append(i) # same training split as dpvo
-                self.scene_index[scene] = inx_list
+            graph = self.scene_info[scene]['graph']
+            inx_list = []
+            for i in graph:
+                if i < len(graph) - 65:
+                    inx_list.append(i) # same training split as dpvo
+            if is_test_scene(scene):
+                self.scene_index_val[scene] = inx_list
+                logger.info(f"Reserving {scene} for validation.")
             else:
-                logger.info("Reserving {} for validation.".format(scene))
+                self.scene_index_train[scene] = inx_list
+
 
             graph = self.scene_info[scene]['graph']
             images_list = self.scene_info[scene]['images']
             depths_list = self.scene_info[scene]['depths']
             assert len(images_list) == len(graph)
             # remove repeated part in item in image_list and depth_list
-            # images_list = [remove_duplicated_segment(item) for item in images_list]
-            # depths_list = [remove_duplicated_segment(item) for item in depths_list]
+            images_list = [remove_duplicated_segment(item) for item in images_list]
+            depths_list = [remove_duplicated_segment(item) for item in depths_list]
             self.scene_info[scene]['images'] = images_list
             self.scene_info[scene]['depths'] = depths_list
 
@@ -283,10 +284,9 @@ class _Dataset(torch.utils.data.Dataset):
         pose[:3, -1] = trans
         pose = torch.from_numpy(pose.astype(np.float32))
     
-        img = load_image(img_path, grayscale=False)
+        img = load_image(img_path, grayscale=False)[[2,1,0]].contiguous() # normalized RGB
         depth = torch.from_numpy((np.load(depth_path) / TartanAir.DEPTH_SCALE).astype(np.float32))[None]
         assert depth.shape[-2:] == img.shape[-2:]
-
         data = \
                 self.aug(img, depth, intrinsics)
 
@@ -309,14 +309,19 @@ class _Dataset(torch.utils.data.Dataset):
         logger.info("Sampling new %s data with seed %d.", self.split, seed)
         self.items = []
         split = self.split
-        if split != 'train':
-            raise NotImplementedError("Only train split is supported.")
+        if split != 'train' and split != 'val':
+            raise NotImplementedError(f"Only train and validation splits are supported.")
         
-        for scene_id in self.scene_index:
+        if split == 'train':
+            scene_index = self.scene_index_train
+        else:
+            scene_index = self.scene_index_val
+        
+        for scene_id in scene_index:
             frame_graph = self.scene_info[scene_id]['graph']
 
             pairs = []
-            for ix in self.scene_index[scene_id]:
+            for ix in scene_index[scene_id]:
                 inds = [ ix ]
                 while len(inds) < self.conf.views:
                     # get other frames within flow threshold
