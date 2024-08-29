@@ -1,0 +1,26 @@
+GPUS=1
+
+executable = /home/hli/glue-factory/train_scripts/cluster_train_tartan.sh 
+arguments = sp+sg_homography_initlg_onecyclelr_tartan
+error = /is/cluster/fast/hli/glue/outputs/training/tartan_rpj_initlg_onecyclelr.err
+output = /is/cluster/fast/hli/glue/outputs/training/tartan_rpj_initlg_onecyclelr.out
+log = /is/cluster/fast/hli/glue/outputs/training/tartan_rpj_initlg_onecyclelr.log
+
+# CPU and memory requirement
+request_cpus = 16
+request_memory = 128G
+
+# Hard disk requirement
+request_disk = 2000G
+
+# GPU requirement, use H100
+request_gpus = $(GPUS)
+# requirements = (TARGET.CUDAGlobalMemoryMb > 50000) && (CUDACapability >= 9.0)
+requirements = (LocalDiskType =?= "NVMe") && (TARGET.CUDAGlobalMemoryMb > 30000) && (CUDACapability >= 9.0)
+
+# use H100
+# requirements = (TARGET.CUDAGlobalMemoryMb > 50000) && (CUDACapability >= 9.0)
+# use template : FullNode(4)
+# requirements = $(requirements) && (target.machine == g139)
+
+queue
