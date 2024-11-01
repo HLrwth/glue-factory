@@ -8,3 +8,6 @@
 /outputs/
 /ckpt/
 __pycache__
+.flake8
+diff_2_1f56839.txt
+/ckpt/
