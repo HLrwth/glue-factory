@@ -384,7 +384,7 @@ class SimpleGlue(nn.Module):
         "depth_confidence": -1,  # early stopping, disable with -1
         "width_confidence": -1,  # point pruning, disable with -1
         "filter_threshold": 0.0,  # match threshold
-        "logvar_threshold": 0.0,  # logvar threshold as unmatched
+        "logvar_filter_threshold": 0.0,  # logvar threshold as unmatched
         "checkpointed": False,
         "weights": None,  # either a path or the name of pretrained weights (disk, ...)
         "weights_from_version": "v0.1_arxiv",
@@ -459,7 +459,7 @@ class SimpleGlue(nn.Module):
                     state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
 
                 state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
-                print("Load state dict from lightglue!")
+                print(f"Load state dict from lightglue!")
 
                 self.load_state_dict(state_dict, strict=False)
 
