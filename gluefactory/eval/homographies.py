@@ -9,13 +9,12 @@ from omegaconf import OmegaConf
 from tqdm import tqdm
 
 from ..datasets import get_dataset
+from ..models import get_model
 from ..models.cache_loader import CacheLoader
 from ..models.utils.metrics import matcher_metrics
-from ..models.matchers import simpleglue
 from ..settings import EVAL_PATH
 from ..utils.export_predictions import export_predictions
 from ..utils.tensor import map_tensor, batch_to_device
-from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
 
@@ -28,9 +27,9 @@ class HomographiesValPipeline(EvalPipeline):
     default_conf = {
         "data": {
             "name": "homographies",
-            "data_dir": "revisitop1m",
-            "train_size": 150000,
-            "val_size": 2000,
+            "data_dir": "revisitop1m_debug",
+            "train_size": 1,
+            "val_size": 10,
             "batch_size": 1,
             "num_workers": 1,
             "homography": {
@@ -87,7 +86,6 @@ class HomographiesValPipeline(EvalPipeline):
         #     "run_gt_in_forward": True,
         # },
         "eval": {
-            "model_name": "simpleglue", 
             "filter_threshold": [0, 0.1, 0.2],  # visual matching threshold
             "logvar_filter_threshold": [-1, -0.5, 0, 0.5, 1, 1.5, 2, 3],  # uncertainty threshold
         },
@@ -114,7 +112,17 @@ class HomographiesValPipeline(EvalPipeline):
         pred_file = experiment_dir / "predictions.h5"
         if not pred_file.exists() or overwrite:
             if model is None:
-                model = load_model(self.conf.model, self.conf.checkpoint)
+                try:
+                    model = load_model(self.conf.model, self.conf.checkpoint)
+                except ValueError as e:
+                    model_name = self.conf.model.matcher.name.split('.')[-1]
+                    if model_name == "simpleglue":
+                        # exit with error if model is not initialized
+                        raise ValueError("Model is not initialized. Please provide a checkpoint.")
+                    elif model_name == "lightglue":
+                        assert self.conf.model.matcher.weights == "superpoint_lightglue", "Lightglue requires superpoint_lightglue weights"
+                        model = get_model("two_view_pipeline")(self.conf.model).eval()
+
             export_predictions(
                 self.get_dataloader(self.conf.data),
                 model,
@@ -128,31 +136,30 @@ class HomographiesValPipeline(EvalPipeline):
         p_rp_01 = pred["p_rp_01"]
         p_rp_10 = pred["p_rp_10"]
         scores = p_rp_01 * p_rp_10
+        max0, max1 = scores.max(2), scores.max(1)
+        m0, m1 = max0.indices, max1.indices
+        indices0 = torch.arange(m0.shape[1], device=m0.device)[None]
+        indices1 = torch.arange(m1.shape[1], device=m1.device)[None]
+        mutual0 = indices0 == m1.gather(1, m0)
+        mutual1 = indices1 == m0.gather(1, m1)
+        max0_exp = max0.values
+        zero = max0_exp.new_tensor(0)
+        mscores0 = torch.where(mutual0, max0_exp, zero)
+        mscores1 = torch.where(mutual1, mscores0.gather(1, m1), zero)
+
         logvar_01 = pred["logvar_01"]
         logvar_10 = pred["logvar_10"]
 
-        return simpleglue.compute_matches(scores, logvar_01, logvar_10)
+        logvar_01_value = logvar_01.max(-1).values
+        logvar_10_value = logvar_10.max(-1).values
 
-    def filter_matches_sg(self, m, mscores, mutual, logvar_value, score_th, logvar_th, pred):
-        valid0 = mutual[0] & (logvar_value[0] < logvar_th) \
-           & (logvar_value[1].gather(1, m[0]) < logvar_th)
-        mscores0_test = torch.where(valid0, mscores[0], 10000)
-        # print(f"with logvar_th {logvar_th} minimal mscores0_test value {mscores0_test.min().item()}")
-        if mscores0_test.min().item() < 0.01:
-            idx = mscores0_test.min(-1).indices
-            p_rp_01 = pred["p_rp_01"]
-            p_rp_10 = pred["p_rp_10"]
-            scores = p_rp_01 * p_rp_10
-            val01, minm0_m1_idx = scores[0][idx].max(-1)
-            print(f' val01 {val01.item()}, minm0_m1_idx {minm0_m1_idx.item()}')
-            print(f'min mscores0_test {mscores0_test.min().item()} at idx {idx}')
-            print(f'logvar_th {logvar_th}')
-            minm0_m1_match = m[0][0][idx]
-            val10, minm1_m0_idx = scores[0][:, minm0_m1_match].max(-2)
-            print(f'minm0_m1_match {minm0_m1_match.item()}')
-            print(f' val10 {val10.item()}, minm1_m0_idx {minm1_m0_idx.item()}')
-
-        m0, m1, mscores0, mscores1 = simpleglue.filter_matches_with_th(m, mscores, mutual, logvar_value, score_th, logvar_th)
+        return m0, mutual0, mscores0, logvar_01_value, m1, mutual1, mscores1, logvar_10_value
+    
+    def filter_matches_sg(self, m0, mutual0, mscores0, lv_01_value, m1, mutual1, mscores1, lv_10_value, th, lv_th):
+        valid0 = mutual0 & (mscores0 > th) & (lv_01_value < lv_th) & (lv_10_value.gather(1, m0) < lv_th)
+        valid1 = mutual1 & valid0.gather(1, m1)
+        m0 = torch.where(valid0, m0, -1)
+        m1 = torch.where(valid1, m1, -1)
         pred_filtered = {
             "matches0": m0,
             "matches1": m1,
@@ -208,12 +215,14 @@ class HomographiesValPipeline(EvalPipeline):
 
         metrics_keys = ('match_recall', 'match_precision', 'accuracy')
         results = {'names': []}
-        if conf.model_name == "simpleglue":
+        model_name = self.conf.model.matcher.name.split('.')[-1]
+        
+        if model_name == "simpleglue":
             for th in score_ths:
                 results[th] = {}
                 for lv_th in logvar_ths:
                     results[th][lv_th] = {k: {"mean": AverageMetric(), "median": MedianMetric()} for k in metrics_keys}
-        elif conf.model_name == "lightglue":
+        elif model_name == "lightglue":
             for th in score_ths:
                 results[th] = {k: {"mean": AverageMetric(), "median": MedianMetric()} for k in metrics_keys}
 
@@ -225,19 +234,18 @@ class HomographiesValPipeline(EvalPipeline):
             # Add batch dimension
             pred = map_tensor(pred, lambda t: torch.unsqueeze(t, dim=0))
 
-            if conf.model_name == "simpleglue":
-                m, mscores, mutual, logvar_value = self.compute_matches_sg(pred)
+            if model_name == "simpleglue":
+                m0, mutual0, mscores0, lv_01_value, m1, mutual1, mscores1, lv_10_value = self.compute_matches_sg(pred)
 
                 for th in score_ths:
                     for lv_th in logvar_ths:
-                        pred_filtered = self.filter_matches_sg( m, mscores, mutual, logvar_value, th, lv_th, pred)
+                        pred_filtered = self.filter_matches_sg(m0, mutual0, mscores0, lv_01_value, m1, mutual1, mscores1, lv_10_value, th, lv_th)
                         metrics = matcher_metrics(pred_filtered, {**pred, **data})
                         for k in metrics_keys:
                             results[th][lv_th][k]['mean'].update(metrics[k])
                             results[th][lv_th][k]['median'].update(metrics[k])
-            elif conf.model_name == "lightglue":
-                scores = pred["log_assignment"]
-                m, mscores, mutual = self.compute_matches_lg(scores)
+            elif model_name == "lightglue":
+                m, mscores, mutual = self.compute_matches_lg(pred["log_assignment"])
                 for th in score_ths:
                     pred_filtered = self.filter_matches_lg(m, mscores, mutual, th)
                     metrics = matcher_metrics(pred_filtered, {**pred, **data})
@@ -252,17 +260,17 @@ class HomographiesValPipeline(EvalPipeline):
             if th == "names":
                 continue
             for k, v in th_results.items():
-                if conf.model_name == "simpleglue":
+                if model_name == "simpleglue":
                     for kk, vv in v.items():
                         results[th][k][kk]['mean'] = vv['mean'].compute()
                         results[th][k][kk]['median'] = vv['median'].compute()
-                elif conf.model_name == "lightglue":
+                elif model_name == "lightglue":
                     results[th][k]['mean'] = v['mean'].compute()
                     results[th][k]['median'] = v['median'].compute()
 
         # plot pr cures for each threshold
         figures = {}
-        if conf.model_name == "simpleglue":
+        if model_name == "simpleglue":
             for th in score_ths:
                 precision_i_mean = [results[th][lv_th]['match_precision']['mean'] for lv_th in logvar_ths]
                 recall_i_mean = [results[th][lv_th]['match_recall']['mean'] for lv_th in logvar_ths]
@@ -296,12 +304,12 @@ class HomographiesValPipeline(EvalPipeline):
         # convert summaries and results to dict of {k, numbers}
         summaries = {}
         for th in score_ths:
-            if conf.model_name == "simpleglue":
+            if model_name == "simpleglue":
                 for lv_th in logvar_ths:
                     for m in metrics_keys:
                         summaries[f'{th}_{lv_th}_{m}_mean'] = results[th][lv_th][m]['mean']
                         summaries[f'{th}_{lv_th}_{m}_median'] = results[th][lv_th][m]['median']
-            elif conf.model_name == "lightglue":
+            elif model_name == "lightglue":
                 for m in metrics_keys:
                     summaries[f'{th}_{m}_mean'] = results[th][m]['mean']
                     summaries[f'{th}_{m}_median'] = results[th][m]['median']
