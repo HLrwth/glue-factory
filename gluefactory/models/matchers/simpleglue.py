@@ -61,7 +61,7 @@ class EmCrossEntropyLoss(nn.Module):
 
 
 
-@torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
 def normalize_keypoints(
     kpts: torch.Tensor, size: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
@@ -438,8 +438,9 @@ class SimpleGlue(nn.Module):
                     str(DATA_PATH / conf.weights), map_location="cpu"
                 )
             else:
-                if 'lightglue' in conf.weights:
+                if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
+                    pprint(f"Initialize state from lightglue for training")
                 fname = (
                     f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
                     + ".pth"
@@ -459,9 +460,9 @@ class SimpleGlue(nn.Module):
                     state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
 
                 state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
-                print(f"Load state dict from lightglue!")
-
                 self.load_state_dict(state_dict, strict=False)
+            else:
+                self.load_state_dict(state_dict, strict=True)
 
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:
