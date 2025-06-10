@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # prepare dataset
-#mksquashfs ./datasets ./datasets.squashfs -noI -noD -noF -noX -no-fragments -no-duplicates
+#mksquashfs ./datasets ./datasets.squashfs -noI -noD -noF -noX -no-fragments -no-duplicates -no-xattrs
 
 mkdir /tmp/.cache
 export PYTORCH_KERNEL_CACHE_PATH=/tmp/.cache
