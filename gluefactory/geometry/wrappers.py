@@ -357,6 +357,7 @@ class Camera(TensorWrapper):
         """
         assert pts.shape[-1] == 2
         # assert pts.shape[:-2] == self.shape  # allow broadcasting
+        print(f"Distortion parameters: {self.dist}")
         return distort_points(pts, self.dist)
 
     def J_distort(self, pts: torch.Tensor):
@@ -382,6 +383,15 @@ class Camera(TensorWrapper):
         p2d, mask = self.distort(p2d)
         p2d = self.denormalize(p2d)
         valid = visible & mask & self.in_image(p2d)
+        return p2d, valid
+
+    @autocast
+    def cam2image_relaxed(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
+        """Transform 3D points into 2D pixel coordinates."""
+        p2d, visible = self.project(p3d)
+        p2d, mask = self.distort(p2d)
+        p2d = self.denormalize(p2d)
+        valid = visible & mask
         return p2d, valid
 
     def J_world2image(self, p3d: torch.Tensor):

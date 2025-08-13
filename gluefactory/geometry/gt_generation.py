@@ -2,17 +2,19 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-from .depth import project, sample_depth
+from .depth import project, sample_depth, project_relaxed
 from .epipolar import T_to_E, sym_epipolar_distance_all
 from .homography import warp_points_torch
+from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
+MAX_RPJ_RES_SQ = 9
 
 
 @torch.no_grad()
 def gt_matches_from_pose_depth(
-    kp0, kp1, data, pos_th=3, neg_th=5, epi_th=None, cc_th=None, min_depth=0, relaxed_bd=0, **kw
+    kp0, kp1, data, pos_th=3, neg_th=5, epi_th=None, cc_th=None, **kw
 ):
     assert kp0.shape[1] != 0 and kp1.shape[1] != 0
     if kp0.shape[1] == 0 or kp1.shape[1] == 0:
@@ -38,18 +40,29 @@ def gt_matches_from_pose_depth(
         d0, valid0 = sample_depth(kp0, depth0)
         d1, valid1 = sample_depth(kp1, depth1)
 
-    kp0_1, visible0 = project(
-        kp0, d0, depth1, camera0, camera1, T_0to1, valid0, ccth=cc_th
-    )
-    kp1_0, visible1 = project(
-        kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
-    )
+    if kw["relaxed_proj"]:
+        kp0_1, visible0 = project_relaxed(
+            kp0, d0, camera0, camera1, T_0to1, valid0
+        )
+        kp1_0, visible1 = project_relaxed(
+            kp1, d1, camera1, camera0, T_1to0, valid1
+        )
+    else:
+        kp0_1, visible0 = project(
+            kp0, d0, depth1, camera0, camera1, T_0to1, valid0, ccth=cc_th
+        )
+        kp1_0, visible1 = project(
+            kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
+        )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
-    valid0_1 = valid0 & (d0 > min_depth) & torch.all((kp0_1 >= -relaxed_bd) & (kp0_1 <= (camera1.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
-    valid1_0 = valid1 & (d1 > min_depth) & torch.all((kp1_0 >= -relaxed_bd) & (kp1_0 <= (camera0.size.unsqueeze(-2) - 1 + relaxed_bd)), -1)
-    
+    rpj_valid0_1 = valid0 & (d0 > Camera.eps)
+    rpj_valid1_0 = valid1 & (d1 > Camera.eps)
+
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
     res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
+    if kw["relaxed_proj"]:
+        res0_1_sq = torch.where(visible0.unsqueeze(-1), res0_1_sq, MAX_RPJ_RES_SQ)
+        res1_0_sq = torch.where(visible1.unsqueeze(-1), res1_0_sq, MAX_RPJ_RES_SQ)
 
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum(res0_1_sq, -1)
@@ -110,8 +123,8 @@ def gt_matches_from_pose_depth(
         "proj_1to0": kp1_0,
         "visible0": visible0,
         "visible1": visible1,
-        "valid0_1": valid0_1,
-        "valid1_0": valid1_0,
+        "rpj_valid0_1": rpj_valid0_1,
+        "rpj_valid1_0": rpj_valid1_0,
         "res0_1_sq": res0_1_sq,
         "res1_0_sq": res1_0_sq,
     }
@@ -132,8 +145,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     kp0_1 = warp_points_torch(kp0, H, inverse=False)
     kp1_0 = warp_points_torch(kp1, H, inverse=True)
 
-    valid0_1 = torch.ones_like(kp0_1[..., 0])
-    valid1_0 = torch.ones_like(kp1_0[..., 0])
+    rpj_valid0_1 = torch.ones_like(kp0_1[..., 0])
+    rpj_valid1_0 = torch.ones_like(kp1_0[..., 0])
 
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
     res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
@@ -176,8 +189,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         "matching_scores1": (m1 > -1).float(),
         "proj_0to1": kp0_1,
         "proj_1to0": kp1_0,
-        "valid0_1": valid0_1,
-        "valid1_0": valid1_0,
+        "rpj_valid0_1": rpj_valid0_1,
+        "rpj_valid1_0": rpj_valid1_0,
         "res0_1_sq": res0_1_sq,
         "res1_0_sq": res1_0_sq,
     }

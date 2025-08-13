@@ -67,6 +67,21 @@ def project(
         # visible = validi
         return kpi_j, visible
 
+def project_relaxed(
+    kpi,
+    di,
+    camera_i,
+    camera_j,
+    T_itoj,
+    validi,
+):
+    kpi_3d_i = camera_i.image2cam(kpi)
+    kpi_3d_i = kpi_3d_i * di[..., None]
+    kpi_3d_j = T_itoj.transform(kpi_3d_i)
+    kpi_j, validj = camera_j.cam2image_relaxed(kpi_3d_j)
+    validi = validi & validj
+    return kpi_j, validi & validj
+
 
 def dense_warp_consistency(
     depthi: torch.Tensor,
