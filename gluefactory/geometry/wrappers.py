@@ -385,15 +385,6 @@ class Camera(TensorWrapper):
         valid = visible & mask & self.in_image(p2d)
         return p2d, valid
 
-    @autocast
-    def cam2image_relaxed(self, p3d: torch.Tensor) -> Tuple[torch.Tensor]:
-        """Transform 3D points into 2D pixel coordinates."""
-        p2d, visible = self.project(p3d)
-        p2d, mask = self.distort(p2d)
-        p2d = self.denormalize(p2d)
-        valid = visible & mask
-        return p2d, valid
-
     def J_world2image(self, p3d: torch.Tensor):
         p2d_dist, valid = self.project(p3d)
         J = self.J_denormalize() @ self.J_distort(p2d_dist) @ self.J_project(p3d)
