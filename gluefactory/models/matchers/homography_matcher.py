@@ -42,6 +42,10 @@ class HomographyMatcher(BaseModel):
                 data["H_0to1"],
                 pos_th=self.conf.th_positive,
                 neg_th=self.conf.th_negative,
+                **{
+                    "image_size0": data["view0"]["image_size"],
+                    "image_size1": data["view1"]["image_size"],
+                }
             )
         if self.conf.use_lines:
             line_assignment, line_m0, line_m1 = gt_line_matches_from_homography(

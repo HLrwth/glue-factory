@@ -9,8 +9,8 @@ from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RPJ_RES_SQ = 9
-
+MAX_RES_SQ = 20000
+MIN_DEPTH = 0.05
 
 @torch.no_grad()
 def gt_matches_from_pose_depth(
@@ -25,7 +25,7 @@ def gt_matches_from_pose_depth(
         )
         m0 = -torch.ones_like(kp0[:, :, 0]).long()
         m1 = -torch.ones_like(kp1[:, :, 0]).long()
-        return assignment, m0, m1
+        return {"assignment": assignment, "matches0": m0, "matches1": m1}
     camera0, camera1 = data["view0"]["camera"], data["view1"]["camera"]
     T_0to1, T_1to0 = data["T_0to1"], data.get("T_1to0", data["T_0to1"].inv())
 
@@ -47,17 +47,22 @@ def gt_matches_from_pose_depth(
         kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
     )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
-    rpj_valid0_1 = valid0 & (d0 > Camera.eps)
-    rpj_valid1_0 = valid1 & (d1 > Camera.eps)
+    valid0_1 = valid0 & (d0 > MIN_DEPTH)
+    valid1_0 = valid1 & (d1 > MIN_DEPTH)
 
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
-    res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
-    res0_1_sq = torch.where(visible0.unsqueeze(-1), res0_1_sq, MAX_RPJ_RES_SQ)
-    res1_0_sq = torch.where(visible1.unsqueeze(-1), res1_0_sq, MAX_RPJ_RES_SQ)
+    res1_0_sq = (kp1_0.unsqueeze(-2) - kp0.unsqueeze(-3)) ** 2
+    # make sure cc_th is None
+    assert cc_th is None # TODO: remove
+    assert torch.numel(camera0.dist) == 0 and torch.numel(camera1.dist) == 0
+    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
+    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
+
+    # TODO: add penalize term for large depth points
 
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum(res0_1_sq, -1)
-    dist1 = torch.sum(res1_0_sq, -1)
+    dist1 = torch.sum(res1_0_sq, -1).transpose(1, 2)
 
     dist = torch.max(dist0, dist1)
     inf = dist.new_tensor(float("inf"))
@@ -114,8 +119,8 @@ def gt_matches_from_pose_depth(
         "proj_1to0": kp1_0,
         "visible0": visible0,
         "visible1": visible1,
-        "rpj_valid0_1": rpj_valid0_1,
-        "rpj_valid1_0": rpj_valid1_0,
+        "valid0_1": valid0_1,
+        "valid1_0": valid1_0,
         "res0_1_sq": res0_1_sq,
         "res1_0_sq": res1_0_sq,
     }
@@ -136,15 +141,21 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     kp0_1 = warp_points_torch(kp0, H, inverse=False)
     kp1_0 = warp_points_torch(kp1, H, inverse=True)
 
-    rpj_valid0_1 = torch.ones_like(kp0_1[..., 0])
-    rpj_valid1_0 = torch.ones_like(kp1_0[..., 0])
+    valid0_1 = torch.ones_like(kp0_1[..., 0], device=kp0_1.device, dtype=torch.bool)
+    valid1_0 = torch.ones_like(kp1_0[..., 0], device=kp1_0.device, dtype=torch.bool)
 
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
-    res1_0_sq = (kp0.unsqueeze(-2) - kp1_0.unsqueeze(-3)) ** 2
+    res1_0_sq = (kp1_0.unsqueeze(-2) - kp0.unsqueeze(-3)) ** 2
+    size0 = kw["image_size0"].unsqueeze(0).to(res0_1_sq.device)
+    size1 = kw["image_size1"].unsqueeze(0).to(res1_0_sq.device)
+    visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1 - 1)), dim=-1)
+    visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0 - 1)), dim=-1)
+    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
+    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
 
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum(res0_1_sq, -1)
-    dist1 = torch.sum(res1_0_sq, -1)
+    dist1 = torch.sum(res1_0_sq, -1).transpose(1, 2)
     dist = torch.max(dist0, dist1)
 
     reward = (dist < pos_th**2).float() - (dist > neg_th**2).float()
@@ -180,8 +191,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
         "matching_scores1": (m1 > -1).float(),
         "proj_0to1": kp0_1,
         "proj_1to0": kp1_0,
-        "rpj_valid0_1": rpj_valid0_1,
-        "rpj_valid1_0": rpj_valid1_0,
+        "valid0_1": valid0_1,
+        "valid1_0": valid1_0,
         "res0_1_sq": res0_1_sq,
         "res1_0_sq": res1_0_sq,
     }

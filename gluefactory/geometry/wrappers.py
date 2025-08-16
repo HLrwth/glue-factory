@@ -357,7 +357,6 @@ class Camera(TensorWrapper):
         """
         assert pts.shape[-1] == 2
         # assert pts.shape[:-2] == self.shape  # allow broadcasting
-        print(f"Distortion parameters: {self.dist}")
         return distort_points(pts, self.dist)
 
     def J_distort(self, pts: torch.Tensor):
