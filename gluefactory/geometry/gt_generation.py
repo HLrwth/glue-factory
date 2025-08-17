@@ -9,7 +9,7 @@ from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 20000
+MAX_RES_SQ = 40000
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
@@ -47,19 +47,8 @@ def gt_matches_from_pose_depth(
         kp1, d1, depth0, camera1, camera0, T_1to0, valid1, ccth=cc_th
     )
     mask_visible = visible0.unsqueeze(-1) & visible1.unsqueeze(-2)
-    valid0_1 = valid0 & (d0 > MIN_DEPTH)
-    valid1_0 = valid1 & (d1 > MIN_DEPTH)
-
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
     res1_0_sq = (kp1_0.unsqueeze(-2) - kp0.unsqueeze(-3)) ** 2
-    # make sure cc_th is None
-    assert cc_th is None # TODO: remove
-    assert torch.numel(camera0.dist) == 0 and torch.numel(camera1.dist) == 0
-    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
-    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
-
-    # TODO: add penalize term for large depth points
-
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum(res0_1_sq, -1)
     dist1 = torch.sum(res1_0_sq, -1).transpose(1, 2)
@@ -106,6 +95,18 @@ def gt_matches_from_pose_depth(
         m0 = torch.where((~valid0) & exclude0, ignore.new_tensor(-1), m0)
         m1 = torch.where((~valid1) & exclude1, ignore.new_tensor(-1), m1)
 
+    # new terms
+    assert cc_th is None # TODO: remove
+    assert torch.numel(camera0.dist) == 0 and torch.numel(camera1.dist) == 0
+    valid0_1 = valid0 & (d0 > MIN_DEPTH)
+    valid1_0 = valid1 & (d1 > MIN_DEPTH)
+    scale0_1_sq = (camera1.size.max(-1).values / 2)**2
+    scale1_0_sq = (camera0.size.max(-1).values / 2)**2
+    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 10000
+    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 10000
+    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
+    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
+
     return {
         "assignment": positive,
         "reward": (dist < pos_th**2).float() - (epi_dist > neg_th).float(),
@@ -141,18 +142,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     kp0_1 = warp_points_torch(kp0, H, inverse=False)
     kp1_0 = warp_points_torch(kp1, H, inverse=True)
 
-    valid0_1 = torch.ones_like(kp0_1[..., 0], device=kp0_1.device, dtype=torch.bool)
-    valid1_0 = torch.ones_like(kp1_0[..., 0], device=kp1_0.device, dtype=torch.bool)
-
     res0_1_sq = (kp0_1.unsqueeze(-2) - kp1.unsqueeze(-3)) ** 2
     res1_0_sq = (kp1_0.unsqueeze(-2) - kp0.unsqueeze(-3)) ** 2
-    size0 = kw["image_size0"].unsqueeze(0).to(res0_1_sq.device)
-    size1 = kw["image_size1"].unsqueeze(0).to(res1_0_sq.device)
-    visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1 - 1)), dim=-1)
-    visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0 - 1)), dim=-1)
-    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
-    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
-
     # build a distance matrix of size [... x M x N]
     dist0 = torch.sum(res0_1_sq, -1)
     dist1 = torch.sum(res1_0_sq, -1).transpose(1, 2)
@@ -181,6 +172,21 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     m1 = torch.where(positive.any(-2), min1, ignore)
     m0 = torch.where(negative0, unmatched, m0)
     m1 = torch.where(negative1, unmatched, m1)
+
+    # new terms
+    valid0_1 = torch.ones_like(kp0_1[..., 0], device=kp0_1.device, dtype=torch.bool)
+    valid1_0 = torch.ones_like(kp1_0[..., 0], device=kp1_0.device, dtype=torch.bool)
+
+    size0 = kw["image_size0"].to(res0_1_sq.device)
+    size1 = kw["image_size1"].to(res1_0_sq.device)
+    visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1.unsqueeze(1) - 1)), dim=-1)
+    visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0.unsqueeze(1) - 1)), dim=-1)
+    scale0_1_sq = (size1.max(-1).values / 2)**2
+    scale1_0_sq = (size0.max(-1).values / 2)**2
+    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 10000
+    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 10000
+    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
+    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
 
     return {
         "assignment": positive,
