@@ -34,22 +34,16 @@ class EmCrossEntropyLoss(nn.Module):
         logvar_01 = pred['logvar_01']
         logvar_10 = pred['logvar_10']
 
-        if not data.get('tr_logvar'):
-            logvar_01 = logvar_01.new_tensor(0)
-            logvar_10 = logvar_10.new_tensor(0)
-
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
-        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1)
-        # res0_1_sq = res0_1_sq.mean(-1)
+        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1) / 2.0
         valid0_1_num = valid0_1.sum(-1).clamp(min=1.0)
         loss_rp_01 = (res0_1_sq * valid0_1).sum(-1) / valid0_1_num
         loss_logvar_01 = (logvar_01.mean(-1) * valid0_1).sum(-1) / valid0_1_num
 
         # frame1 to frame0
-        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-3)
-        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1)
-        # res1_0_sq = res1_0_sq.mean(-1)
+        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-2)
+        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1) / 2.0
         valid1_0_num = valid1_0.sum(-1).clamp(min=1.0)
         loss_rp_10 = (res1_0_sq * valid1_0).sum(-1) /valid1_0_num
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
@@ -101,41 +95,6 @@ class LearnableFourierPositionalEncoding(nn.Module):
         emb = torch.stack([cosines, sines], 0).unsqueeze(-3)
         return emb.repeat_interleave(2, dim=-1)
 
-
-class TokenConfidence(nn.Module):
-    def __init__(self, dim: int, logvar_thr = 0) -> None:
-        super().__init__()
-        self.token = nn.Sequential(nn.Linear(dim, 1), nn.Sigmoid())
-        self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
-        self.logvar_thr = logvar_thr
-
-    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
-        """get confidence tokens"""
-        return (
-            self.token(desc0.detach()).squeeze(-1),
-            self.token(desc1.detach()).squeeze(-1),
-        )
-
-    def loss(self, desc0, desc1, p_rp_now, logvar_now, p_rp_final, logvar_final):
-        logit0 = self.token[0](desc0.detach()).squeeze(-1)
-        logit1 = self.token[0](desc1.detach()).squeeze(-1)
-        la_now, la_final = la_now.detach(), la_final.detach()
-        a_now0 = torch.cat((p_rp_now[0], torch.sigmoid(logvar_now[0] + self.logvar_thr)), -1)
-        a_now1 = torch.cat((p_rp_now[1], torch.sigmoid(logvar_now[1] + self.logvar_thr)), -1)
-
-        a_final0 = torch.cat((p_rp_final[0], torch.sigmoid(logvar_final[0] + self.logvar_thr)), -1)
-        a_final1 = torch.cat((p_rp_final[1], torch.sigmoid(logvar_final[1] + self.logvar_thr)), -1)
-
-        correct0 = (
-            a_final0.max(-1).indices == a_now0.max(-1).indices
-        )
-        correct1 = (
-            a_final1.max(-1).indices == a_now1.max(-1).indices
-        )
-        return (
-            self.loss_fn(logit0, correct0.float()).mean(-1)
-            + self.loss_fn(logit1, correct1.float()).mean(-1)
-        ) / 2.0
 
 
 class Attention(nn.Module):
@@ -304,23 +263,12 @@ def double_softmax(sim: torch.Tensor) -> torch.Tensor:
     scores = scores0 * scores1
     return scores
 
-def check_grad(grad):
-    if torch.isnan(grad).any():
-        print("NaN in gradients!")
-    if torch.isinf(grad).any():
-        print("Inf in gradients!")
 
 class ReprojLikelihood(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = dim
         self.logvar_proj = nn.Linear(dim, 2, bias=True)
-        # self.logvar_proj = nn.Sequential(
-        #     nn.Linear(dim, dim),
-        #     nn.GELU(),
-        #     nn.Linear(dim, 2)
-        # )
-
         self.final_proj = nn.Linear(dim, dim, bias=True)
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
@@ -330,16 +278,10 @@ class ReprojLikelihood(nn.Module):
         mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
         sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
 
-        # scores = double_softmax(sim)
-        # sim = scores * sim
-
         # numerical stable softmax
         p_rp_01 = F.softmax((sim - sim.max(2, keepdim=True).values), 2)
-        # p_rp_01.register_hook(check_grad)
         sim_t = sim.transpose(-1, -2).contiguous()
         p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2).transpose(-1, -2)
-        # p_rp_10.register_hook(check_grad)
-
 
         logvar_01 = self.logvar_proj(desc0)
         logvar_10 = self.logvar_proj(desc1)
@@ -417,16 +359,7 @@ class SimpleGlue(nn.Module):
         )
 
         self.reproj_likelihood = nn.ModuleList([ReprojLikelihood(d) for _ in range(n)])
-        # self.token_confidence = nn.ModuleList(
-        #     [TokenConfidence(d) for _ in range(n - 1)]
-        # )
-
         self.loss_fn = EmCrossEntropyLoss()
-
-        # if hasattr(self, 'confidence_thresholds'):
-        #     print("Attribute 'confidence_thresholds' exists with value:", self.confidence_thresholds)
-        # else:
-        #     print("Attribute 'confidence_thresholds' does not exist.")
 
         state_dict = None
         if conf.weights is not None:
@@ -441,28 +374,26 @@ class SimpleGlue(nn.Module):
                 if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
                     pprint(f"Initialize state from lightglue for training")
-                fname = (
-                    f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
-                    + ".pth"
-                )
-                state_dict = torch.hub.load_state_dict_from_url(
-                    self.url.format(conf.weights_from_version, conf.weights),
-                    file_name=fname,
-                )
+                    # rename old state dict entries
+                    for i in range(self.conf.n_layers):
+                        pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                        pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                    state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
+                else:
+                    fname = (
+                        f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
+                        + ".pth"
+                    )
+                    state_dict = torch.hub.load_state_dict_from_url(
+                        self.url.format(conf.weights_from_version, conf.weights),
+                        file_name=fname,
+                    )
 
         if state_dict:
-            # rename old state dict entries
-            if 'lightglue' in conf.weights:
-                for i in range(self.conf.n_layers):
-                    pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
-                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-                    pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
-                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-
-                state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
-                self.load_state_dict(state_dict, strict=False)
-            else:
-                self.load_state_dict(state_dict, strict=True)
+            strict = False if 'lightglue' in conf.weights else True
+            self.load_state_dict(state_dict, strict=strict)
 
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:
@@ -520,24 +451,12 @@ class SimpleGlue(nn.Module):
             desc1 = desc1.half()
         desc0 = self.input_proj(desc0)
         desc1 = self.input_proj(desc1)
-
         # cache positional embeddings
         encoding0 = self.posenc(kpts0)
         encoding1 = self.posenc(kpts1)
 
-        # GNN + final_proj + assignment
-        do_early_stop = self.conf.depth_confidence > 0 and not self.training
-        do_point_pruning = self.conf.width_confidence > 0 and not self.training
-
         all_desc0, all_desc1 = [], []
 
-        if do_point_pruning:
-            ind0 = torch.arange(0, m, device=device)[None]
-            ind1 = torch.arange(0, n, device=device)[None]
-            # We store the index of the layer at which pruning is detected.
-            prune0 = torch.ones_like(ind0)
-            prune1 = torch.ones_like(ind1)
-        token0, token1 = None, None
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
                 desc0, desc1 = checkpoint(
@@ -551,46 +470,13 @@ class SimpleGlue(nn.Module):
                 all_desc1.append(desc1)
                 continue  # no early stopping or adaptive width at last layer
 
-            # only for eval
-            if do_early_stop:
-                assert b == 1
-                token0, token1 = self.token_confidence[i](desc0, desc1)
-                if self.check_if_stop(token0[..., :m, :], token1[..., :n, :], i, m + n):
-                    break
-            if do_point_pruning:
-                assert b == 1
-                scores0 = self.reproj_likelihood[i].get_var(desc0)
-                prunemask0 = self.get_pruning_mask(token0, scores0, i)
-                keep0 = torch.where(prunemask0)[1]
-                ind0 = ind0.index_select(1, keep0)
-                desc0 = desc0.index_select(1, keep0)
-                encoding0 = encoding0.index_select(-2, keep0)
-                prune0[:, ind0] += 1
-                scores1 = self.reproj_likelihood[i].get_var(desc1)
-                prunemask1 = self.get_pruning_mask(token1, scores1, i)
-                keep1 = torch.where(prunemask1)[1]
-                ind1 = ind1.index_select(1, keep1)
-                desc1 = desc1.index_select(1, keep1)
-                encoding1 = encoding1.index_select(-2, keep1)
-                prune1[:, ind1] += 1
-
+        # eval with last valid layer
         p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
         scores = p_rp_01 * p_rp_10
         m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
 
-        if do_point_pruning:
-            m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
-            m1_ = torch.full((b, n), -1, device=m1.device, dtype=m1.dtype)
-            m0_[:, ind0] = torch.where(m0 == -1, -1, ind1.gather(1, m0.clamp(min=0)))
-            m1_[:, ind1] = torch.where(m1 == -1, -1, ind0.gather(1, m1.clamp(min=0)))
-            mscores0_ = torch.zeros((b, m), device=mscores0.device)
-            mscores1_ = torch.zeros((b, n), device=mscores1.device)
-            mscores0_[:, ind0] = mscores0
-            mscores1_[:, ind1] = mscores1
-            m0, m1, mscores0, mscores1 = m0_, m1_, mscores0_, mscores1_
-        else:
-            prune0 = torch.ones_like(mscores0) * self.conf.n_layers
-            prune1 = torch.ones_like(mscores1) * self.conf.n_layers
+        prune0 = torch.ones_like(mscores0) * self.conf.n_layers
+        prune1 = torch.ones_like(mscores1) * self.conf.n_layers
 
         pred = {
             "matches0": m0,
@@ -609,38 +495,6 @@ class SimpleGlue(nn.Module):
 
         return pred
 
-    def confidence_threshold(self, layer_index: int) -> float:
-        """scaled confidence threshold"""
-        threshold = 0.8 + 0.1 * np.exp(-4.0 * layer_index / self.conf.n_layers)
-        return np.clip(threshold, 0, 1)
-
-    def get_pruning_mask(
-        self, confidences: torch.Tensor, scores: torch.Tensor, layer_index: int
-    ) -> torch.Tensor:
-        """mask points which should be removed"""
-        keep = scores > (1 - self.conf.width_confidence)
-        if confidences is not None:  # Low-confidence points are never pruned.
-            keep |= confidences <= self.confidence_thresholds[layer_index]
-        return keep
-
-    def check_if_stop(
-        self,
-        confidences0: torch.Tensor,
-        confidences1: torch.Tensor,
-        layer_index: int,
-        num_points: int,
-    ) -> torch.Tensor:
-        """evaluate stopping condition"""
-        confidences = torch.cat([confidences0, confidences1], -1)
-        threshold = self.confidence_thresholds[layer_index]
-        ratio_confident = 1.0 - (confidences < threshold).float().sum() / num_points
-        return ratio_confident > self.conf.depth_confidence
-
-    def pruning_min_kpts(self, device: torch.device):
-        if self.conf.flash and FLASH_AVAILABLE and device.type == "cuda":
-            return self.pruning_keypoint_thresholds["flash"]
-        else:
-            return self.pruning_keypoint_thresholds[device.type]
 
     def loss(self, pred, data):
         def loss_params(pred, i):
@@ -656,9 +510,6 @@ class SimpleGlue(nn.Module):
         N = pred["ref_descriptors0"].shape[1]
         losses = {"total": loss_rp + loss_logvar, "last_rp": loss_rp.clone().detach(), "last_logvar": loss_logvar.clone().detach()}
 
-        # if self.training:
-        #     losses["confidence"] = 0.0
-
         for i in range(N - 1):
             params_i = loss_params(pred, i)
             loss_rp, loss_logvar = self.loss_fn(params_i, data)
@@ -670,19 +521,10 @@ class SimpleGlue(nn.Module):
             sum_weights += weight
             losses["total"] = losses["total"] + (loss_rp + loss_logvar) * weight
 
-            # losses["confidence"] += self.token_confidence[i].loss(
-            #     pred["ref_descriptors0"][:, i],
-            #     pred["ref_descriptors1"][:, i],
-            #     params_i["reproj_likelihood"],
-            #     pred["reproj_likelihood"],
-            # ) / (N - 1)
 
             del params_i
         losses["total"] /= sum_weights
 
-        # confidences
-        # if self.training:
-        #     losses["total"] = losses["total"] + losses["confidence"]
 
         if not self.training:
             # add metrics
