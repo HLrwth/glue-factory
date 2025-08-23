@@ -2,6 +2,7 @@ import warnings
 from pathlib import Path
 from typing import Callable, List, Optional
 
+import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,6 +18,42 @@ FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
 torch.backends.cudnn.deterministic = True
 
+class PositionEmbeddingSine(nn.Module):
+    """
+    This is a more standard version of the position embedding, very similar to the one
+    used by the Attention is all you need paper, generalized to work on images.
+    """
+    def __init__(self, num_pos_feats=128, temperature=10000, normalize=True, scale=None):
+        super().__init__()
+        self.num_pos_feats = num_pos_feats
+        self.temperature = temperature
+        self.normalize = normalize
+        if scale is not None and normalize is False:
+            raise ValueError("normalize should be True if scale is passed")
+        if scale is None:
+            scale = 2 * torch.pi
+        self.scale = scale
+
+        # Precompute frequency vector dim_t and its inverse as buffers.
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+        self.register_buffer("inv_dim_t", 1.0 / dim_t, persistent=False)
+
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
+    def forward(self, kpts, size):
+        if self.normalize:
+            kpts = kpts / size.unsqueeze(0) * self.scale
+
+        x_embed = kpts[..., 0]
+        y_embed = kpts[..., 1]
+
+        pos_x = x_embed[..., None] * self.inv_dim_t
+        pos_y = y_embed[..., None] * self.inv_dim_t
+        pos_x = torch.stack((pos_x[..., 0::2].sin(), pos_x[..., 1::2].cos()), dim=-1).flatten(-2)
+        pos_y = torch.stack((pos_y[..., 0::2].sin(), pos_y[..., 1::2].cos()), dim=-1).flatten(-2)
+        pos = torch.cat((pos_y, pos_x), dim=-1)
+        return pos
+    
 
 class EmCrossEntropyLoss(nn.Module):
     def __init__(self):
@@ -34,22 +71,16 @@ class EmCrossEntropyLoss(nn.Module):
         logvar_01 = pred['logvar_01']
         logvar_10 = pred['logvar_10']
 
-        if not data.get('tr_logvar'):
-            logvar_01 = logvar_01.new_tensor(0)
-            logvar_10 = logvar_10.new_tensor(0)
-
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
-        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1)
-        # res0_1_sq = res0_1_sq.mean(-1)
+        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1) / 2.0
         valid0_1_num = valid0_1.sum(-1).clamp(min=1.0)
         loss_rp_01 = (res0_1_sq * valid0_1).sum(-1) / valid0_1_num
         loss_logvar_01 = (logvar_01.mean(-1) * valid0_1).sum(-1) / valid0_1_num
 
         # frame1 to frame0
-        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-3)
-        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1)
-        # res1_0_sq = res1_0_sq.mean(-1)
+        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-2)
+        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1) / 2.0
         valid1_0_num = valid1_0.sum(-1).clamp(min=1.0)
         loss_rp_10 = (res1_0_sq * valid1_0).sum(-1) /valid1_0_num
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
@@ -178,13 +209,26 @@ class SelfBlock(nn.Module):
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        assert self.embed_dim % num_heads == 0
         self.head_dim = self.embed_dim // num_heads
-        self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim, bias=bias)
+        assert self.embed_dim % num_heads == 0
+
+        self.num_heads = num_heads * 2
+        # self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim, bias=bias)
+        
+        self.Wqk = nn.Linear(embed_dim, 2 * 2 * embed_dim, bias=bias)
+        self.Wv = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.inner_attn = Attention(flash)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.ffn = nn.Sequential(
+            nn.Linear(2 * embed_dim, 2 * embed_dim),
+            nn.LayerNorm(2 * embed_dim, elementwise_affine=True),
+            nn.GELU(),
+            nn.Linear(2 * embed_dim, embed_dim),
+        )
+
+        self.Wv_geom = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj_geom = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.ffn_geom = nn.Sequential(
             nn.Linear(2 * embed_dim, 2 * embed_dim),
             nn.LayerNorm(2 * embed_dim, elementwise_affine=True),
             nn.GELU(),
@@ -196,17 +240,27 @@ class SelfBlock(nn.Module):
         x: torch.Tensor,
         encoding: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        qkv = self.Wqkv(x)
-        qkv = qkv.unflatten(-1, (self.num_heads, -1, 3)).transpose(1, 2)
-        q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        q = apply_cached_rotary_emb(encoding, q)
+    ) -> torch.Tensor:        
+        x_vis = x[..., :self.embed_dim]
+        x_geom = x[..., self.embed_dim:]
+
+        qk = self.Wqk(x_vis)
+        qk = qk.unflatten(-1, (self.num_heads, -1, 2)).transpose(1, 2)  # BxMxD(512 * 2) -> BxH(8)xMxD(64)x2
+        q, k = qk[..., 0], qk[..., 1]
+        q = apply_cached_rotary_emb(encoding, q)  # BxH(8)xMxD(64)
         k = apply_cached_rotary_emb(encoding, k)
-        context = self.inner_attn(q, k, v, mask=mask)
-        message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
-        return x + self.ffn(torch.cat([x, message], -1))
+        v_vis = self.Wv(x_vis)  # BxHxMxD(256)
+        v_geo = self.Wv_geom(x_geom)  # BxHxMxD(256)
+        v = torch.cat([v_vis, v_geo], dim=-1)
+        v = v.unflatten(-1, (self.num_heads, -1)).transpose(1, 2)
+        context = self.inner_attn(q, k, v, mask=mask).transpose(1, 2).flatten(start_dim=-2)
+        message_vis = self.out_proj(context[..., :self.embed_dim])
+        message_geom = self.out_proj_geom(context[..., self.embed_dim:])
+        x_vis = x_vis + self.ffn(torch.cat([x_vis, message_vis], -1))
+        x_geom = x_geom + self.ffn_geom(torch.cat([x_geom, message_geom], -1))
+        return x_vis, x_geom
 
-
+    
 class CrossBlock(nn.Module):
     def __init__(
         self, embed_dim: int, num_heads: int, flash: bool = False, bias: bool = True
@@ -269,7 +323,8 @@ class TransformerLayer(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.self_attn = SelfBlock(*args, **kwargs)
-        self.cross_attn = CrossBlock(*args, **kwargs)
+        self.cross_attn_vis = CrossBlock(*args, **kwargs)
+        self.cross_attn_geom = CrossBlock(*args, **kwargs)
 
     def forward(
         self,
@@ -283,18 +338,23 @@ class TransformerLayer(nn.Module):
         if mask0 is not None and mask1 is not None:
             return self.masked_forward(desc0, desc1, encoding0, encoding1, mask0, mask1)
         else:
-            desc0 = self.self_attn(desc0, encoding0)
-            desc1 = self.self_attn(desc1, encoding1)
-            return self.cross_attn(desc0, desc1)
+            desc0_vis, desc0_geom = self.self_attn(desc0, encoding0)
+            desc1_vis, desc1_geom = self.self_attn(desc1, encoding1)
+            x0_vis, x1_vis =  self.cross_attn_vis(desc0_vis, desc1_vis)
+            x0_geom, x1_geom =  self.cross_attn_geom(desc0_geom, desc1_geom)
 
+            return torch.cat([x0_vis, x0_geom], -1), torch.cat([x1_vis, x1_geom], -1)
     # This part is compiled and allows padding inputs
     def masked_forward(self, desc0, desc1, encoding0, encoding1, mask0, mask1):
         mask = mask0 & mask1.transpose(-1, -2)
         mask0 = mask0 & mask0.transpose(-1, -2)
         mask1 = mask1 & mask1.transpose(-1, -2)
-        desc0 = self.self_attn(desc0, encoding0, mask0)
-        desc1 = self.self_attn(desc1, encoding1, mask1)
-        return self.cross_attn(desc0, desc1, mask)
+        desc0_vis, desc0_geom = self.self_attn(desc0, encoding0, mask0)
+        desc1_vis, desc1_geom = self.self_attn(desc1, encoding1, mask1)
+        x0_vis, x1_vis =  self.cross_attn_vis(desc0_vis, desc1_vis, mask)
+        x0_geom, x1_geom =  self.cross_attn_geom(desc0_geom, desc1_geom, mask)
+
+        return torch.cat([x0_vis, x0_geom], -1), torch.cat([x1_vis, x1_geom], -1)
 
 
 def double_softmax(sim: torch.Tensor) -> torch.Tensor:
@@ -304,45 +364,33 @@ def double_softmax(sim: torch.Tensor) -> torch.Tensor:
     scores = scores0 * scores1
     return scores
 
-def check_grad(grad):
-    if torch.isnan(grad).any():
-        print("NaN in gradients!")
-    if torch.isinf(grad).any():
-        print("Inf in gradients!")
 
 class ReprojLikelihood(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
         self.dim = dim
         self.logvar_proj = nn.Linear(dim, 2, bias=True)
-        # self.logvar_proj = nn.Sequential(
-        #     nn.Linear(dim, dim),
-        #     nn.GELU(),
-        #     nn.Linear(dim, 2)
-        # )
-
         self.final_proj = nn.Linear(dim, dim, bias=True)
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
         """build assignment matrix from descriptors"""
-        mdesc0, mdesc1 = self.final_proj(desc0), self.final_proj(desc1)
+        desc0_vis = desc0[..., :self.dim]
+        desc0_geom = desc0[..., self.dim:]
+        desc1_vis = desc1[..., :self.dim]
+        desc1_geom = desc1[..., self.dim:]
+
+        mdesc0, mdesc1 = self.final_proj(desc0_vis), self.final_proj(desc1_vis)
         _, _, d = mdesc0.shape
         mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
         sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
 
-        # scores = double_softmax(sim)
-        # sim = scores * sim
-
         # numerical stable softmax
         p_rp_01 = F.softmax((sim - sim.max(2, keepdim=True).values), 2)
-        # p_rp_01.register_hook(check_grad)
         sim_t = sim.transpose(-1, -2).contiguous()
         p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2).transpose(-1, -2)
-        # p_rp_10.register_hook(check_grad)
 
-
-        logvar_01 = self.logvar_proj(desc0)
-        logvar_10 = self.logvar_proj(desc1)
+        logvar_01 = self.logvar_proj(desc0_geom)
+        logvar_10 = self.logvar_proj(desc1_geom)
 
         return p_rp_01, p_rp_10, logvar_01, logvar_10
 
@@ -410,6 +458,8 @@ class SimpleGlue(nn.Module):
             2 + 2 * conf.add_scale_ori, head_dim, head_dim
         )
 
+        self.abs_posenc = PositionEmbeddingSine(conf.descriptor_dim // 2)
+
         h, n, d = conf.num_heads, conf.n_layers, conf.descriptor_dim
 
         self.transformers = nn.ModuleList(
@@ -417,16 +467,7 @@ class SimpleGlue(nn.Module):
         )
 
         self.reproj_likelihood = nn.ModuleList([ReprojLikelihood(d) for _ in range(n)])
-        # self.token_confidence = nn.ModuleList(
-        #     [TokenConfidence(d) for _ in range(n - 1)]
-        # )
-
         self.loss_fn = EmCrossEntropyLoss()
-
-        # if hasattr(self, 'confidence_thresholds'):
-        #     print("Attribute 'confidence_thresholds' exists with value:", self.confidence_thresholds)
-        # else:
-        #     print("Attribute 'confidence_thresholds' does not exist.")
 
         state_dict = None
         if conf.weights is not None:
@@ -441,28 +482,26 @@ class SimpleGlue(nn.Module):
                 if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
                     pprint(f"Initialize state from lightglue for training")
-                fname = (
-                    f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
-                    + ".pth"
-                )
-                state_dict = torch.hub.load_state_dict_from_url(
-                    self.url.format(conf.weights_from_version, conf.weights),
-                    file_name=fname,
-                )
+                    # rename old state dict entries
+                    for i in range(self.conf.n_layers):
+                        pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                        pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                    state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
+                else:
+                    fname = (
+                        f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
+                        + ".pth"
+                    )
+                    state_dict = torch.hub.load_state_dict_from_url(
+                        self.url.format(conf.weights_from_version, conf.weights),
+                        file_name=fname,
+                    )
 
         if state_dict:
-            # rename old state dict entries
-            if 'lightglue' in conf.weights:
-                for i in range(self.conf.n_layers):
-                    pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
-                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-                    pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
-                    state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-
-                state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
-                self.load_state_dict(state_dict, strict=False)
-            else:
-                self.load_state_dict(state_dict, strict=True)
+            strict = False if 'lightglue' in conf.weights else True
+            self.load_state_dict(state_dict, strict=strict)
 
     def compile(self, mode="reduce-overhead"):
         if self.conf.width_confidence != -1:
@@ -520,10 +559,17 @@ class SimpleGlue(nn.Module):
             desc1 = desc1.half()
         desc0 = self.input_proj(desc0)
         desc1 = self.input_proj(desc1)
-
         # cache positional embeddings
         encoding0 = self.posenc(kpts0)
         encoding1 = self.posenc(kpts1)
+
+        # add geom info
+        abs_pe0 = self.abs_posenc(kpts0)
+        abs_pe1 = self.abs_posenc(kpts1)
+        desc0_geom = desc0 + abs_pe0
+        desc1_geom = desc1 + abs_pe1
+        desc0 = torch.cat([desc0, desc0_geom], -1)
+        desc1 = torch.cat([desc1, desc1_geom], -1)
 
         # GNN + final_proj + assignment
         do_early_stop = self.conf.depth_confidence > 0 and not self.training
@@ -531,13 +577,6 @@ class SimpleGlue(nn.Module):
 
         all_desc0, all_desc1 = [], []
 
-        if do_point_pruning:
-            ind0 = torch.arange(0, m, device=device)[None]
-            ind1 = torch.arange(0, n, device=device)[None]
-            # We store the index of the layer at which pruning is detected.
-            prune0 = torch.ones_like(ind0)
-            prune1 = torch.ones_like(ind1)
-        token0, token1 = None, None
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
                 desc0, desc1 = checkpoint(
@@ -551,46 +590,13 @@ class SimpleGlue(nn.Module):
                 all_desc1.append(desc1)
                 continue  # no early stopping or adaptive width at last layer
 
-            # only for eval
-            if do_early_stop:
-                assert b == 1
-                token0, token1 = self.token_confidence[i](desc0, desc1)
-                if self.check_if_stop(token0[..., :m, :], token1[..., :n, :], i, m + n):
-                    break
-            if do_point_pruning:
-                assert b == 1
-                scores0 = self.reproj_likelihood[i].get_var(desc0)
-                prunemask0 = self.get_pruning_mask(token0, scores0, i)
-                keep0 = torch.where(prunemask0)[1]
-                ind0 = ind0.index_select(1, keep0)
-                desc0 = desc0.index_select(1, keep0)
-                encoding0 = encoding0.index_select(-2, keep0)
-                prune0[:, ind0] += 1
-                scores1 = self.reproj_likelihood[i].get_var(desc1)
-                prunemask1 = self.get_pruning_mask(token1, scores1, i)
-                keep1 = torch.where(prunemask1)[1]
-                ind1 = ind1.index_select(1, keep1)
-                desc1 = desc1.index_select(1, keep1)
-                encoding1 = encoding1.index_select(-2, keep1)
-                prune1[:, ind1] += 1
-
+        # eval with last valid layer
         p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
         scores = p_rp_01 * p_rp_10
         m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
 
-        if do_point_pruning:
-            m0_ = torch.full((b, m), -1, device=m0.device, dtype=m0.dtype)
-            m1_ = torch.full((b, n), -1, device=m1.device, dtype=m1.dtype)
-            m0_[:, ind0] = torch.where(m0 == -1, -1, ind1.gather(1, m0.clamp(min=0)))
-            m1_[:, ind1] = torch.where(m1 == -1, -1, ind0.gather(1, m1.clamp(min=0)))
-            mscores0_ = torch.zeros((b, m), device=mscores0.device)
-            mscores1_ = torch.zeros((b, n), device=mscores1.device)
-            mscores0_[:, ind0] = mscores0
-            mscores1_[:, ind1] = mscores1
-            m0, m1, mscores0, mscores1 = m0_, m1_, mscores0_, mscores1_
-        else:
-            prune0 = torch.ones_like(mscores0) * self.conf.n_layers
-            prune1 = torch.ones_like(mscores1) * self.conf.n_layers
+        prune0 = torch.ones_like(mscores0) * self.conf.n_layers
+        prune1 = torch.ones_like(mscores1) * self.conf.n_layers
 
         pred = {
             "matches0": m0,
@@ -609,38 +615,6 @@ class SimpleGlue(nn.Module):
 
         return pred
 
-    def confidence_threshold(self, layer_index: int) -> float:
-        """scaled confidence threshold"""
-        threshold = 0.8 + 0.1 * np.exp(-4.0 * layer_index / self.conf.n_layers)
-        return np.clip(threshold, 0, 1)
-
-    def get_pruning_mask(
-        self, confidences: torch.Tensor, scores: torch.Tensor, layer_index: int
-    ) -> torch.Tensor:
-        """mask points which should be removed"""
-        keep = scores > (1 - self.conf.width_confidence)
-        if confidences is not None:  # Low-confidence points are never pruned.
-            keep |= confidences <= self.confidence_thresholds[layer_index]
-        return keep
-
-    def check_if_stop(
-        self,
-        confidences0: torch.Tensor,
-        confidences1: torch.Tensor,
-        layer_index: int,
-        num_points: int,
-    ) -> torch.Tensor:
-        """evaluate stopping condition"""
-        confidences = torch.cat([confidences0, confidences1], -1)
-        threshold = self.confidence_thresholds[layer_index]
-        ratio_confident = 1.0 - (confidences < threshold).float().sum() / num_points
-        return ratio_confident > self.conf.depth_confidence
-
-    def pruning_min_kpts(self, device: torch.device):
-        if self.conf.flash and FLASH_AVAILABLE and device.type == "cuda":
-            return self.pruning_keypoint_thresholds["flash"]
-        else:
-            return self.pruning_keypoint_thresholds[device.type]
 
     def loss(self, pred, data):
         def loss_params(pred, i):
@@ -656,9 +630,6 @@ class SimpleGlue(nn.Module):
         N = pred["ref_descriptors0"].shape[1]
         losses = {"total": loss_rp + loss_logvar, "last_rp": loss_rp.clone().detach(), "last_logvar": loss_logvar.clone().detach()}
 
-        # if self.training:
-        #     losses["confidence"] = 0.0
-
         for i in range(N - 1):
             params_i = loss_params(pred, i)
             loss_rp, loss_logvar = self.loss_fn(params_i, data)
@@ -670,19 +641,10 @@ class SimpleGlue(nn.Module):
             sum_weights += weight
             losses["total"] = losses["total"] + (loss_rp + loss_logvar) * weight
 
-            # losses["confidence"] += self.token_confidence[i].loss(
-            #     pred["ref_descriptors0"][:, i],
-            #     pred["ref_descriptors1"][:, i],
-            #     params_i["reproj_likelihood"],
-            #     pred["reproj_likelihood"],
-            # ) / (N - 1)
 
             del params_i
         losses["total"] /= sum_weights
 
-        # confidences
-        # if self.training:
-        #     losses["total"] = losses["total"] + losses["confidence"]
 
         if not self.training:
             # add metrics
