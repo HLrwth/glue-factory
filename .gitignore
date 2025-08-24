@@ -18,3 +18,4 @@ data/
 *.ipynb
 train_scenes_debug.txt
 *.png
+log/
