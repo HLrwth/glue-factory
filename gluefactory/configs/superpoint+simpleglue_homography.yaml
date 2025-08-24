@@ -25,11 +25,10 @@ model:
         th_negative: 3
     matcher:
         name: matchers.simpleglue
-        weights: superpoint_lightglue  # This will initalize from ligthglue weights
         filter_threshold: 0.1
         logvar_filter_threshold: 1.5
         flash: true
-        checkpointed: false
+        checkpointed: true
 train:
     seed: 0
     optimizer: adamw

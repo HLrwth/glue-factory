@@ -12,6 +12,7 @@ import signal
 from collections import defaultdict
 from pathlib import Path
 from pydoc import locate
+import subprocess
 
 import numpy as np
 import torch
@@ -710,6 +711,11 @@ if __name__ == "__main__":
     logger.info(f"Starting experiment {args.experiment}")
     output_dir = Path(settings.TRAINING_PATH, args.experiment)
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    # Get current commit hash
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+    commit_file = output_dir / "commit_hash.txt"
+    commit_file.write_text(commit + "\n")
 
     conf = OmegaConf.from_cli(args.dotlist)
     if args.conf:
