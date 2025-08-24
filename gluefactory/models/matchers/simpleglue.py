@@ -42,7 +42,7 @@ class PositionEmbeddingSine(nn.Module):
     @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
     def forward(self, kpts, size):
         if self.normalize:
-            kpts = kpts / size.unsqueeze(0) * self.scale
+            kpts = kpts / size.unsqueeze(1) * self.scale
 
         x_embed = kpts[..., 0]
         y_embed = kpts[..., 1]
@@ -568,8 +568,8 @@ class SimpleGlue(nn.Module):
         encoding1 = self.posenc(kpts1)
 
         # add geom info
-        abs_pe0 = self.abs_posenc(kpts0)
-        abs_pe1 = self.abs_posenc(kpts1)
+        abs_pe0 = self.abs_posenc(kpts0, size0)
+        abs_pe1 = self.abs_posenc(kpts1, size1)
         desc0_geom = desc0 + abs_pe0
         desc1_geom = desc1 + abs_pe1
         desc0 = torch.cat([desc0, desc0_geom], -1)
