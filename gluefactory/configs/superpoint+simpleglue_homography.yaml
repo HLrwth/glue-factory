@@ -33,7 +33,7 @@ train:
     seed: 0
     optimizer: adamw
     epochs: 40
-    start_epoch_tr_logvar: 0
+    start_epoch_tr_logvar: 20
     log_every_iter: 100
     eval_every_iter: 500
     lr: 1e-4
