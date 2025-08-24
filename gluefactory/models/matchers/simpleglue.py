@@ -71,6 +71,10 @@ class EmCrossEntropyLoss(nn.Module):
         logvar_01 = pred['logvar_01']
         logvar_10 = pred['logvar_10']
 
+        if not data.get('tr_logvar'):
+            logvar_01 = logvar_01.new_tensor(0)
+            logvar_10 = logvar_10.new_tensor(0)
+
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
         res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1) / 2.0
@@ -570,10 +574,6 @@ class SimpleGlue(nn.Module):
         desc1_geom = desc1 + abs_pe1
         desc0 = torch.cat([desc0, desc0_geom], -1)
         desc1 = torch.cat([desc1, desc1_geom], -1)
-
-        # GNN + final_proj + assignment
-        do_early_stop = self.conf.depth_confidence > 0 and not self.training
-        do_point_pruning = self.conf.width_confidence > 0 and not self.training
 
         all_desc0, all_desc1 = [], []
 

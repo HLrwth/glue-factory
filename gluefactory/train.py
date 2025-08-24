@@ -42,7 +42,7 @@ default_train_conf = {
     "seed": "???",  # training seed
     "epochs": 1,  # number of epochs
     "start_epoch_tr_logvar": 0,  # epoch to start training logvar
-    "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
+    "optimizer": "adamw",  # name of optimizer in [adam, sgd, rmsprop]
     "opt_regexp": None,  # regular expression to filter parameters to optimize
     "optimizer_options": {},  # optional arguments passed to the optimizer
     "lr": 0.001,  # learning rate
@@ -376,16 +376,7 @@ def training(rank, conf, output_dir, args):
 
     results = None  # fix bug with it saving
 
-    lr_scheduler_conf = {
-        'options': {
-            'epochs': conf.train.epochs,
-            'steps_per_epoch': len(train_loader),
-        }
-    }
-    lr_scheduler_conf = OmegaConf.merge(conf.train.lr_schedule, lr_scheduler_conf)
-    logger.info(f"Epochs {conf.train.epochs} and steps_per_epoch {lr_scheduler_conf['options']['steps_per_epoch']}")
-
-    lr_scheduler = get_lr_scheduler(optimizer=optimizer, conf=lr_scheduler_conf)
+    lr_scheduler = get_lr_scheduler(optimizer=optimizer, conf=conf.train.lr_schedule)
     if args.restore:
         optimizer.load_state_dict(init_cp["optimizer"])
         if "lr_scheduler" in init_cp:
@@ -572,13 +563,13 @@ def training(rank, conf, output_dir, args):
             del pred, data, loss, losses
 
             # Run validation
-            if (False
-                # (
-                #     it % conf.train.eval_every_iter == 0
-                #     and (it > 0 or epoch == -int(args.no_eval_0))
-                # )
-                # or stop
-                # or it == (len(train_loader) - 1)
+            if (
+                (
+                    it % conf.train.eval_every_iter == 0
+                    and (it > 0 or epoch == -int(args.no_eval_0))
+                )
+                or stop
+                or it == (len(train_loader) - 1)
             ):
                 with fork_rng(seed=conf.train.seed):
                     results, pr_metrics, figures = do_evaluation(
