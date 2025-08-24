@@ -1,16 +1,16 @@
 data:
-    name: tartanair
-    data_dir: TartanAir
-    info_file: TartanAir.pickle
-    batch_size: 1
+    name: homographies
+    data_dir: revisitop1m_debug
+    image_list: revisitop1m.txt
+    train_size: 4
+    val_size: 1
+    batch_size: 2
     num_workers: 1
-    fmin: 1
-    fmax: 100
-    load_features:
-        do: false  # enable this if you have cached predictions
-        path: exports/megadepth-undist-depth-r1024_SP-k2048-nms3/{scene}.h5
-        padding_length: 2048
-        padding_fn: pad_local_features
+    homography:
+        difficulty: 0.7
+        max_angle: 45
+    photometric:
+        name: lg
 model:
     name: two_view_pipeline
     extractor:
@@ -21,15 +21,13 @@ model:
         nms_radius: 3
         trainable: False
     ground_truth:
-        name: matchers.depth_matcher
+        name: matchers.homography_matcher
         th_positive: 3
-        th_negative: 5
-        th_epi: 5
-        min_depth: 1e-4
+        th_negative: 3
     matcher:
         name: matchers.simpleglue
         filter_threshold: 0.1
-        logvar_filter_threshold: 1
+        logvar_filter_threshold: 0
         flash: false
         checkpointed: false
 train:
@@ -44,5 +42,9 @@ train:
         # type: exp
         on_epoch: true
         exp_div_10: 40
-    dataset_callback_fn: sample_new_items
     plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
+benchmarks:
+    hpatches:
+      eval:
+        estimator: opencv
+        ransac_th: 0.5
