@@ -72,8 +72,8 @@ class EmCrossEntropyLoss(nn.Module):
         logvar_10 = pred['logvar_10']
 
         if not data.get('tr_logvar'):
-            logvar_01 = logvar_01.detach() * 0
-            logvar_10 = logvar_10.detach() * 0
+            logvar_01 = logvar_01 * 0
+            logvar_10 = logvar_10 * 0
 
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
@@ -291,22 +291,6 @@ class CrossBlock(nn.Module):
     def map_(self, func: Callable, x0: torch.Tensor, x1: torch.Tensor):
         return func(x0), func(x1)
 
-    def ffn_forward(self, x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
-        z = torch.cat([x, m], -1)
-        # unpack the sequential and call functionally to avoid double-hook
-        lin1, norm, gelu, lin2 = self.ffn
-        z = F.linear(z, lin1.weight, lin1.bias)
-        z = F.layer_norm(
-        z,
-        norm.normalized_shape,
-        norm.weight,
-        norm.bias,
-        norm.eps,
-        )
-        z = F.gelu(z)
-        z = F.linear(z, lin2.weight, lin2.bias)
-        return z
-
     def forward(
         self, x0: torch.Tensor, x1: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> List[torch.Tensor]:
@@ -334,8 +318,8 @@ class CrossBlock(nn.Module):
                 m0, m1 = m0.nan_to_num(), m1.nan_to_num()
         m0, m1 = self.map_(lambda t: t.transpose(1, 2).flatten(start_dim=-2), m0, m1)
         m0, m1 = self.map_(self.to_out, m0, m1)
-        x0 = x0 + self.ffn_forward(x0, m0)
-        x1 = x1 + self.ffn_forward(x1, m1)
+        x0 = x0 + self.ffn(torch.cat([x0, m0], -1))
+        x1 = x1 + self.ffn(torch.cat([x1, m1], -1))
         return x0, x1
 
 
@@ -399,9 +383,7 @@ class ReprojLikelihood(nn.Module):
         desc1_vis = desc1[..., :self.dim]
         desc1_geom = desc1[..., self.dim:]
 
-        # avoid double hook
-        mdesc0 = F.linear(desc0_vis, self.final_proj.weight, self.final_proj.bias)
-        mdesc1 = F.linear(desc1_vis, self.final_proj.weight, self.final_proj.bias)
+        mdesc0, mdesc1 = self.final_proj(desc0_vis), self.final_proj(desc1_vis)
         _, _, d = mdesc0.shape
         mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
         sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
@@ -411,8 +393,8 @@ class ReprojLikelihood(nn.Module):
         sim_t = sim.transpose(-1, -2).contiguous()
         p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2).transpose(-1, -2)
 
-        logvar_01 = F.linear(desc0_geom, self.logvar_proj.weight, self.logvar_proj.bias)
-        logvar_10 = F.linear(desc1_geom, self.logvar_proj.weight, self.logvar_proj.bias)
+        logvar_01 = self.logvar_proj(desc0_geom)
+        logvar_10 = self.logvar_proj(desc1_geom)
 
         return p_rp_01, p_rp_10, logvar_01, logvar_10
 
@@ -596,7 +578,7 @@ class SimpleGlue(nn.Module):
         all_desc0, all_desc1 = [], []
 
         for i in range(self.conf.n_layers):
-            if False and self.training:
+            if self.conf.checkpointed and self.training:
                 desc0, desc1 = checkpoint(
                     self.transformers[i], desc0, desc1, encoding0, encoding1, use_reentrant=False
                 )
@@ -609,10 +591,9 @@ class SimpleGlue(nn.Module):
                 continue  # no early stopping or adaptive width at last layer
 
         # eval with last valid layer
-        with torch.no_grad():
-            p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
-            scores = p_rp_01 * p_rp_10
-            m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
+        p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
+        scores = p_rp_01 * p_rp_10
+        m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
 
         prune0 = torch.ones_like(mscores0) * self.conf.n_layers
         prune1 = torch.ones_like(mscores1) * self.conf.n_layers
