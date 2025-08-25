@@ -390,8 +390,7 @@ class ReprojLikelihood(nn.Module):
         super().__init__()
         self.dim = dim
         self.logvar_proj = nn.Linear(dim, 2, bias=True)
-        self.final_proj1 = nn.Linear(dim, dim, bias=True)
-        self.final_proj2 = nn.Linear(dim, dim, bias=True)
+        self.final_proj = nn.Linear(dim, dim, bias=True)
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor):
         """build assignment matrix from descriptors"""
@@ -401,10 +400,8 @@ class ReprojLikelihood(nn.Module):
         desc1_geom = desc1[..., self.dim:]
 
         # avoid double hook
-        # mdesc0 = F.linear(desc0_vis, self.final_proj.weight, self.final_proj.bias)
-        # mdesc1 = F.linear(desc1_vis, self.final_proj.weight, self.final_proj.bias)
-        mdesc0 = self.final_proj1(desc0_vis)
-        mdesc1 = self.final_proj2(desc1_vis)
+        mdesc0 = F.linear(desc0_vis, self.final_proj.weight, self.final_proj.bias)
+        mdesc1 = F.linear(desc1_vis, self.final_proj.weight, self.final_proj.bias)
         _, _, d = mdesc0.shape
         mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
         sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
@@ -612,9 +609,10 @@ class SimpleGlue(nn.Module):
                 continue  # no early stopping or adaptive width at last layer
 
         # eval with last valid layer
-        p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
-        scores = p_rp_01 * p_rp_10
-        m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
+        with torch.no_grad():
+            p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
+            scores = p_rp_01 * p_rp_10
+            m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
 
         prune0 = torch.ones_like(mscores0) * self.conf.n_layers
         prune1 = torch.ones_like(mscores1) * self.conf.n_layers
