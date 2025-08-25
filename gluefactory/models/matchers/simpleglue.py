@@ -596,7 +596,7 @@ class SimpleGlue(nn.Module):
         all_desc0, all_desc1 = [], []
 
         for i in range(self.conf.n_layers):
-            if self.conf.checkpointed and self.training:
+            if False and self.training:
                 desc0, desc1 = checkpoint(
                     self.transformers[i], desc0, desc1, encoding0, encoding1, use_reentrant=False
                 )
