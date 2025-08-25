@@ -72,8 +72,8 @@ class EmCrossEntropyLoss(nn.Module):
         logvar_10 = pred['logvar_10']
 
         if not data.get('tr_logvar'):
-            logvar_01 = logvar_01.new_tensor(0)
-            logvar_10 = logvar_10.new_tensor(0)
+            logvar_01 = logvar_01.detach() * 0
+            logvar_10 = logvar_10.detach() * 0
 
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
