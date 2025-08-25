@@ -338,7 +338,7 @@ def training(rank, conf, output_dir, args):
         model.load_state_dict(init_cp["model"], strict=False)
     if args.distributed:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], find_unused_parameters=args.find_unused_parameters)
     if rank == 0 and args.print_arch:
         logger.info(f"Model: \n{model}")
 
@@ -699,6 +699,7 @@ if __name__ == "__main__":
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--restore", action="store_true")
     parser.add_argument("--distributed", action="store_true")
+    parser.add_argument("--find_unused_parameters", action="store_true")
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--print_arch", "--pa", action="store_true")
     parser.add_argument("--detect_anomaly", "--da", action="store_true")
