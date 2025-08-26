@@ -13,6 +13,9 @@ from collections import defaultdict
 from pathlib import Path
 from pydoc import locate
 import subprocess
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
 
 import numpy as np
 import torch
@@ -214,9 +217,11 @@ def write_image_summaries(writer, name, figures, step):
         for i, figs in enumerate(figures):
             for k, fig in figs.items():
                 writer.add_figure(f"{name}/{i}_{k}", fig, step)
+                plt.close(fig)
     else:
         for k, fig in figures.items():
             writer.add_figure(f"{name}/{k}", fig, step)
+            plt.close(fig)
 
 
 def training(rank, conf, output_dir, args):
