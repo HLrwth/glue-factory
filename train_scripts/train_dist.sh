@@ -7,7 +7,7 @@
 #SBATCH --partition=a100-galvani   # Which partition will run your job
 #SBATCH --time=2-23:59             # Allowed runtime in D-HH:MM
 #SBATCH --gres=gpu:2               # (optional) Requesting type and number of GPUs
-#SBATCH --mem=80G                  # Total memory pool for all cores (see also --mem-per-cpu); exceeding this number will cause your job to fail.
+#SBATCH --mem=120G                  # Total memory pool for all cores (see also --mem-per-cpu); exceeding this number will cause your job to fail.
 #SBATCH --output=/mnt/lustre/work/bamler/zxiao29/haolong/glue-factory/log/homography_geometry_double_head-%j.out       # File to which STDOUT will be written - make sure this is not on $HOME
 #SBATCH --error=/mnt/lustre/work/bamler/zxiao29/haolong/glue-factory/log/homography_geometry_double_head-%j.err        # File to which STDERR will be written - make sure this is not on $HOME
 #SBATCH --mail-type=ALL            # Type of email notification- BEGIN,END,FAIL,ALL
