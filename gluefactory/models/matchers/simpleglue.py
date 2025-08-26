@@ -18,6 +18,14 @@ FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
 torch.backends.cudnn.deterministic = True
 
+def make_check_grad(name):
+    def check_grad(grad):
+        if torch.isnan(grad).any():
+            print(f"NaN in gradients of {name}!")
+        if torch.isinf(grad).any():
+            print(f"Inf in gradients of {name}!")
+    return check_grad
+
 class PositionEmbeddingSine(nn.Module):
     """
     This is a more standard version of the position embedding, very similar to the one

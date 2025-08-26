@@ -501,6 +501,10 @@ def training(rank, conf, output_dir, args):
                         if param.grad is None and param.requires_grad:
                             print(f"param {name} has no gradient.")
                             detected_anomaly = True
+                        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                            print(f"param {name} has NaN or Inf in grad.")
+                            detected_anomaly = True
+                            
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
                 if conf.train.get("clip_grad", None):
