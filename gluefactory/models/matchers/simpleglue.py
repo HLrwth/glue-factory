@@ -24,6 +24,43 @@ def make_check_grad(name):
             print(f"Inf in gradients of {name}!")
     return check_grad
 
+class PositionEmbeddingSine(nn.Module):
+    """
+    This is a more standard version of the position embedding, very similar to the one
+    used by the Attention is all you need paper, generalized to work on images.
+    """
+    def __init__(self, num_pos_feats=128, temperature=10000, normalize=True, scale=None):
+        super().__init__()
+        self.num_pos_feats = num_pos_feats
+        self.temperature = temperature
+        self.normalize = normalize
+        if scale is not None and normalize is False:
+            raise ValueError("normalize should be True if scale is passed")
+        if scale is None:
+            scale = 2 * torch.pi
+        self.scale = scale
+
+        # Precompute frequency vector dim_t and its inverse as buffers.
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+        self.register_buffer("inv_dim_t", 1.0 / dim_t, persistent=False)
+
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
+    def forward(self, kpts, size):
+        if self.normalize:
+            kpts = kpts / size.unsqueeze(1) * self.scale
+
+        x_embed = kpts[..., 0]
+        y_embed = kpts[..., 1]
+
+        pos_x = x_embed[..., None] * self.inv_dim_t
+        pos_y = y_embed[..., None] * self.inv_dim_t
+        pos_x = torch.stack((pos_x[..., 0::2].sin(), pos_x[..., 1::2].cos()), dim=-1).flatten(-2)
+        pos_y = torch.stack((pos_y[..., 0::2].sin(), pos_y[..., 1::2].cos()), dim=-1).flatten(-2)
+        pos = torch.cat((pos_y, pos_x), dim=-1)
+        return pos
+    
+
 class EmCrossEntropyLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -169,8 +206,8 @@ class SelfBlock(nn.Module):
         qkv = self.Wqkv(x)
         qkv = qkv.unflatten(-1, (self.num_heads, -1, 3)).transpose(1, 2)
         q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        q = apply_cached_rotary_emb(encoding, q)
-        k = apply_cached_rotary_emb(encoding, k)
+        # q = apply_cached_rotary_emb(encoding, q)
+        # k = apply_cached_rotary_emb(encoding, k)
         context = self.inner_attn(q, k, v, mask=mask)
         message = self.out_proj(context.transpose(1, 2).flatten(start_dim=-2))
         return x + self.ffn(torch.cat([x, message], -1))
@@ -362,6 +399,8 @@ class SimpleGlue(nn.Module):
             2 + 2 * conf.add_scale_ori, head_dim, head_dim
         )
 
+        self.abs_posenc = PositionEmbeddingSine(conf.descriptor_dim // 2)
+
         h, n, d = conf.num_heads, conf.n_layers, conf.descriptor_dim
 
         self.transformers = nn.ModuleList(
@@ -464,6 +503,12 @@ class SimpleGlue(nn.Module):
         # cache positional embeddings
         encoding0 = self.posenc(kpts0)
         encoding1 = self.posenc(kpts1)
+
+        # add geom info
+        abs_pe0 = self.abs_posenc(kpts0, size0)
+        abs_pe1 = self.abs_posenc(kpts1, size1)
+        desc0 = desc0 + abs_pe0
+        desc1 = desc1 + abs_pe1
 
         all_desc0, all_desc1 = [], []
 
