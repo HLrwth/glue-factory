@@ -26,6 +26,5 @@ git add -u
 git commit -m "homography_geometry_double_head"
 
 source ~/.bashrc
-conda activate $WORK/.miniconda3/envs/haolong
-srun python -m gluefactory.train homography_geometry_double_head --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
+srun /mnt/lustre/work/bamler/zxiao29/.miniconda3/envs/haolong/bin/python -m gluefactory.train homography_geometry_double_head --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
             --distributed model.matcher.checkpointed=True
