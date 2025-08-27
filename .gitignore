@@ -13,3 +13,5 @@ diff_2_1f56839.txt
 /ckpt/
 /localscripts/
 TODO.md
+*.err
+*.out
