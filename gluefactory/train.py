@@ -730,6 +730,7 @@ if __name__ == "__main__":
     # Get current commit hash
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
     commit_file = output_dir / "commit_hash.txt"
+    print('Current commit hash:', commit)
     commit_file.write_text(commit + "\n")
 
     conf = OmegaConf.from_cli(args.dotlist)
