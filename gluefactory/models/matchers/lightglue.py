@@ -478,7 +478,7 @@ class LightGlue(nn.Module):
                     desc1,
                     encoding0,
                     encoding1,
-                    use_reentrant=True,
+                    use_reentrant=False,  # Recommended by torch, default was True
                 )
             else:
                 desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)

@@ -2,13 +2,11 @@ import warnings
 from pathlib import Path
 from typing import Callable, List, Optional
 
-import math
 import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
@@ -587,8 +585,13 @@ class SimpleGlue(nn.Module):
 
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
-                desc0, desc1 = checkpoint(
-                    self.transformers[i], desc0, desc1, encoding0, encoding1, use_reentrant=False
+                desc0, desc1 = torch.utils.checkpoint.checkpoint(
+                    self.transformers[i], 
+                    desc0, 
+                    desc1, 
+                    encoding0, 
+                    encoding1, 
+                    use_reentrant=True
                 )
             else:
                 desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)
