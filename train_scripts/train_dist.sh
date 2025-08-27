@@ -27,4 +27,4 @@ git commit -m "homography_geometry_double_head"
 source ~/.bashrc
 conda activate $WORK/.miniconda3/envs/haolong_glue
 srun python -m gluefactory.train homography_geometry_double_head --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
-            --distributed model.matcher.checkpointed=False
+            --mp bfloat16 --distributed model.matcher.checkpointed=False
