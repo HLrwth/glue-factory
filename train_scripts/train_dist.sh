@@ -21,10 +21,11 @@ ls $WORK # not necessary just here to illustrate that $WORK is available here
 
 # Go to working directory, add git commit
 cd ${WORK}/haolong/glue-factory
+git switch geometry_double_head
 git add -u
 git commit -m "homography_geometry_double_head"
 
 source ~/.bashrc
 conda activate $WORK/.miniconda3/envs/haolong
 srun python -m gluefactory.train homography_geometry_double_head --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
-            --mp bfloat16 --distributed model.matcher.checkpointed=True
+            --distributed model.matcher.checkpointed=True
