@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from ...settings import DATA_PATH
 from ..utils.losses import NLLLoss
@@ -17,6 +16,13 @@ FLASH_AVAILABLE = hasattr(F, "scaled_dot_product_attention")
 
 torch.backends.cudnn.deterministic = True
 
+def make_check_grad(name):
+    def check_grad(grad):
+        if torch.isnan(grad).any():
+            print(f"NaN in gradients of {name}!")
+        if torch.isinf(grad).any():
+            print(f"Inf in gradients of {name}!")
+    return check_grad
 
 class EmCrossEntropyLoss(nn.Module):
     def __init__(self):
@@ -33,6 +39,10 @@ class EmCrossEntropyLoss(nn.Module):
 
         logvar_01 = pred['logvar_01']
         logvar_10 = pred['logvar_10']
+
+        if not data.get('tr_logvar'):
+            logvar_01 = logvar_01 * 0
+            logvar_10 = logvar_10 * 0
 
         # frame0 to frame1
         res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
@@ -459,8 +469,13 @@ class SimpleGlue(nn.Module):
 
         for i in range(self.conf.n_layers):
             if self.conf.checkpointed and self.training:
-                desc0, desc1 = checkpoint(
-                    self.transformers[i], desc0, desc1, encoding0, encoding1
+                desc0, desc1 = torch.utils.checkpoint.checkpoint(
+                    self.transformers[i], 
+                    desc0, 
+                    desc1, 
+                    encoding0, 
+                    encoding1, 
+                    use_reentrant=False
                 )
             else:
                 desc0, desc1 = self.transformers[i](desc0, desc1, encoding0, encoding1)
