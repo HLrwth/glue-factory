@@ -3,7 +3,7 @@ data:
     data_dir: revisitop1m_debug
     image_list: revisitop1m.txt
     train_size: 4
-    val_size: 1
+    val_size: 4
     batch_size: 2
     num_workers: 1
     homography:
@@ -34,12 +34,12 @@ train:
     seed: 0
     epochs: 10000
     log_every_iter: 1
-    eval_every_iter: 500
+    eval_every_iter: 1
     lr: 0.00008
     clip_grad: 10
     lr_schedule:
         start: 20
-        # type: exp
+        type: exp
         on_epoch: true
         exp_div_10: 40
     plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
