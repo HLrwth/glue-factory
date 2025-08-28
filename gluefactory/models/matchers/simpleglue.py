@@ -384,14 +384,6 @@ class SimpleGlue(nn.Module):
                 if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
                     print(f"Initialize state from lightglue for training")
-                    # rename old state dict entries
-                    for i in range(self.conf.n_layers):
-                        pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
-                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-                        pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
-                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
-                    state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
-                else:
                     fname = (
                         f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
                         + ".pth"
@@ -400,6 +392,13 @@ class SimpleGlue(nn.Module):
                         self.url.format(conf.weights_from_version, conf.weights),
                         file_name=fname,
                     )
+                    # rename old state dict entries
+                    for i in range(self.conf.n_layers):
+                        pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                        pattern = f"cross_attn.{i}", f"transformers.{i}.cross_attn"
+                        state_dict = {k.replace(*pattern): v for k, v in state_dict.items()}
+                    state_dict = {k.replace("log_assignment", "reproj_likelihood") if "log_assignment" in k else k: v for k, v in state_dict.items()}
 
         if state_dict:
             strict = False if 'lightglue' in conf.weights else True
