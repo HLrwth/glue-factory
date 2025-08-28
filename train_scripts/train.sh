@@ -27,4 +27,4 @@ git commit -m "homography_org_transformer"
 
 source ~/.bashrc
 srun /mnt/lustre/work/bamler/zxiao29/.miniconda3/envs/haolong/bin/python -m gluefactory.train homography_org_transformer --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
-            model.matcher.checkpointed=True
+            model.matcher.checkpointed=True model.matcher.weights=superpoint_lightglue
