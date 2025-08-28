@@ -522,7 +522,7 @@ def training(rank, conf, output_dir, args):
                         )
                         scaler.step(optimizer)
                     except RuntimeError:
-                        logger.warning("NaN detected in gradients. Skipping iteration.")
+                        logger.warning(f"NaN detected in gradients. Skipping iteration {it}.")
                     scaler.update()
                 else:
                     scaler.step(optimizer)
@@ -537,12 +537,9 @@ def training(rank, conf, output_dir, args):
                 prof.step()
 
             if it % conf.train.log_every_iter == 0:
-                # print max vram usage
-                for rank in range(torch.cuda.device_count()):
-                    torch.cuda.set_device(rank)
-                    max_mem = torch.cuda.max_memory_allocated(rank) / 1024**2
-                    print(f"Rank {rank}: {max_mem:.2f} MB")
-
+                # Print vram useage
+                max_mem = torch.cuda.max_memory_allocated(rank) / 1024**2
+                print(f"Rank {rank}: {max_mem:.2f} MB")
                 for k in sorted(losses.keys()):
                     if args.distributed:
                         losses[k] = losses[k].sum(-1)
