@@ -522,7 +522,7 @@ def training(rank, conf, output_dir, args):
                         )
                         scaler.step(optimizer)
                     except RuntimeError:
-                        logger.warning("NaN detected in gradients. Skipping iteration.")
+                        logger.warning(f"NaN detected in gradients. Skipping iteration {it}.")
                     scaler.update()
                 else:
                     scaler.step(optimizer)
