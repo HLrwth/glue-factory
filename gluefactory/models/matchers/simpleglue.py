@@ -533,9 +533,9 @@ class SimpleGlue(nn.Module):
         b, m, _ = kpts0.shape
         b, n, _ = kpts1.shape
         device = kpts0.device
-        if "view0" in data.keys() and "view1" in data.keys():
-            size0 = data["view0"].get("image_size")
-            size1 = data["view1"].get("image_size")
+
+        size0 = data["view0"].get("image_size")
+        size1 = data["view1"].get("image_size")
         kpts0 = normalize_keypoints(kpts0, size0).clone()
         kpts1 = normalize_keypoints(kpts1, size1).clone()
 
