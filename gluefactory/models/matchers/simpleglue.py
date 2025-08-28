@@ -383,7 +383,7 @@ class SimpleGlue(nn.Module):
             else:
                 if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
-                    pprint(f"Initialize state from lightglue for training")
+                    print(f"Initialize state from lightglue for training")
                     # rename old state dict entries
                     for i in range(self.conf.n_layers):
                         pattern = f"self_attn.{i}", f"transformers.{i}.self_attn"
