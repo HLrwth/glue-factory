@@ -2,9 +2,9 @@ data:
     name: homographies
     data_dir: revisitop1m_debug
     image_list: revisitop1m.txt
-    train_size: 4
-    val_size: 4
-    batch_size: 2
+    train_size: 1
+    val_size: 1
+    batch_size: 1
     num_workers: 1
     homography:
         difficulty: 0.7
@@ -26,6 +26,7 @@ model:
         th_negative: 3
     matcher:
         name: matchers.simpleglue
+        weights: superpoint_lightglue  # This will initalize from ligthglue weights
         filter_threshold: 0.1
         logvar_filter_threshold: 0
         flash: false
