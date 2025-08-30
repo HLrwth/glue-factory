@@ -45,15 +45,15 @@ class EmCrossEntropyLoss(nn.Module):
             logvar_10 = logvar_10 * 0
 
         # frame0 to frame1
-        res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)
-        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1) / 2.0
+        res0_1_sq = (res0_1_sq * p_rp_01.unsqueeze(-1)).sum(-2)  # BxMx2
+        res0_1_sq = (res0_1_sq * torch.exp(-logvar_01)).mean(-1)  # BxM
         valid0_1_num = valid0_1.sum(-1).clamp(min=1.0)
         loss_rp_01 = (res0_1_sq * valid0_1).sum(-1) / valid0_1_num
         loss_logvar_01 = (logvar_01.mean(-1) * valid0_1).sum(-1) / valid0_1_num
 
         # frame1 to frame0
-        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-2)
-        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1) / 2.0
+        res1_0_sq = (res1_0_sq * p_rp_10.unsqueeze(-1)).sum(-2)  # BxNx2
+        res1_0_sq = (res1_0_sq * torch.exp(-logvar_10)).mean(-1)  # BxN
         valid1_0_num = valid1_0.sum(-1).clamp(min=1.0)
         loss_rp_10 = (res1_0_sq * valid1_0).sum(-1) /valid1_0_num
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
@@ -291,7 +291,7 @@ class ReprojLikelihood(nn.Module):
         # numerical stable softmax
         p_rp_01 = F.softmax((sim - sim.max(2, keepdim=True).values), 2)
         sim_t = sim.transpose(-1, -2).contiguous()
-        p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2).transpose(-1, -2)
+        p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2)
 
         logvar_01 = self.logvar_proj(desc0)
         logvar_10 = self.logvar_proj(desc1)
