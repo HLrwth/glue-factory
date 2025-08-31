@@ -603,7 +603,7 @@ class SimpleGlue(nn.Module):
 
         # eval with last valid layer
         p_rp_01, p_rp_10, logvar_01, logvar_10 = self.reproj_likelihood[i](desc0, desc1)
-        scores = p_rp_01 * p_rp_10
+        scores = p_rp_01 * p_rp_10.transpose(1, 2)
         m0, m1, mscores0, mscores1 = filter_matches(scores, logvar_01, logvar_10, self.conf.filter_threshold, self.conf.logvar_filter_threshold)
 
         prune0 = torch.ones_like(mscores0) * self.conf.n_layers

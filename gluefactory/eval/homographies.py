@@ -135,7 +135,7 @@ class HomographiesValPipeline(EvalPipeline):
     def compute_matches_sg(self, pred):
         p_rp_01 = pred["p_rp_01"]
         p_rp_10 = pred["p_rp_10"]
-        scores = p_rp_01 * p_rp_10
+        scores = p_rp_01 * p_rp_10.transpose(1, 2)
         max0, max1 = scores.max(2), scores.max(1)
         m0, m1 = max0.indices, max1.indices
         indices0 = torch.arange(m0.shape[1], device=m0.device)[None]
