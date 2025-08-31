@@ -92,6 +92,7 @@ def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
+        data.update({'tr_logvar': False})
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
