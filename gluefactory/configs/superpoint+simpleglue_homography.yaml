@@ -33,14 +33,23 @@ train:
     seed: 0
     optimizer: adamw
     epochs: 40
-    start_epoch_tr_logvar: 30
+    start_epoch_tr_logvar: 0
     log_every_iter: 100
     eval_every_iter: 500
     lr: 1e-4
     lr_schedule:
         start: 20
-        type: exp
-        on_epoch: true
+        type: OneCycleLR
+        options:
+            epochs: 40
+            steps_per_epoch: 500
+            max_lr: 1e-4
+            pct_start: 0.1
+            anneal_strategy: linear
+            cycle_momentum: False
+            div_factor: 10
+            final_div_factor: 10000
+        on_epoch: false
         exp_div_10: 10
     plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
 benchmarks:

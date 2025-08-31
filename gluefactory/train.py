@@ -381,8 +381,17 @@ def training(rank, conf, output_dir, args):
     }[args.mixed_precision]
 
     results = None  # fix bug with it saving
+    
+    lr_scheduler_conf = {
+        'options': {
+            'epochs': conf.train.epochs,
+            'steps_per_epoch': len(train_loader),
+        }
+    }
+    lr_scheduler_conf = OmegaConf.merge(conf.train.lr_schedule, lr_scheduler_conf)
+    logger.info(f"Epochs {conf.train.epochs} and steps_per_epoch {lr_scheduler_conf['options']['steps_per_epoch']}")
 
-    lr_scheduler = get_lr_scheduler(optimizer=optimizer, conf=conf.train.lr_schedule)
+    lr_scheduler = get_lr_scheduler(optimizer=optimizer, conf=lr_scheduler_conf)
     if args.restore:
         optimizer.load_state_dict(init_cp["optimizer"])
         if "lr_scheduler" in init_cp:
