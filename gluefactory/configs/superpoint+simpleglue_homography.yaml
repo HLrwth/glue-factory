@@ -49,7 +49,7 @@ train:
             cycle_momentum: False
             div_factor: 10
             final_div_factor: 10000
-        on_epoch: false
+        on_epoch: true
         exp_div_10: 10
     plot: [5, 'gluefactory.visualization.visualize_batch.make_match_figures']
 benchmarks:
