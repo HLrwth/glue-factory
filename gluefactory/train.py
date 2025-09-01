@@ -81,7 +81,7 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 
 @torch.no_grad()
-def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
+def do_evaluation(model, loader, device, loss_fn, conf, rank, tr_logvar, pbar=True):
     model.eval()
     results = {}
     pr_metrics = defaultdict(PRMetric)
@@ -92,7 +92,7 @@ def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
-        data.update({'tr_logvar': False})
+        data.update({'tr_logvar': tr_logvar})
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
@@ -419,6 +419,8 @@ def training(rank, conf, output_dir, args):
             with_stack=True,
         )
         prof.__enter__()
+
+    tr_logvar = False
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
             logger.info(f"Starting epoch {epoch}")
@@ -471,9 +473,9 @@ def training(rank, conf, output_dir, args):
                         conf.train.seed + epoch
                     )
         for it, data in enumerate(train_loader):
-            data.update({'tr_logvar': False})
             if epoch >= conf.train.start_epoch_tr_logvar:
-                data.update({'tr_logvar': True})
+                tr_logvar = True
+            data.update({'tr_logvar': tr_logvar})
             tot_it = (len(train_loader) * epoch + it) * (
                 args.n_gpus if args.distributed else 1
             )
@@ -602,6 +604,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
+                        tr_logvar,
                         pbar=(rank == 0),
                     )
 
@@ -644,6 +647,7 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
+                        tr_logvar,
                         pbar=(rank == 0),
                     )
                     best_eval = results[conf.train.best_key]
