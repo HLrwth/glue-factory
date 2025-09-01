@@ -26,8 +26,8 @@ model:
         th_negative: 3
     matcher:
         name: matchers.simpleglue
-        weights: superpoint_lightglue  # This will initalize from ligthglue weights
-        # weights: outputs/training/homography_org_transformer_lgweight_noclip/checkpoint_28_33958.tar
+        # weights: superpoint_lightglue  # This will initalize from ligthglue weights
+        weights: outputs/training/homography_org_transformer_noclip_newlr/checkpoint_39_46839.tar
         filter_threshold: 0.1
         logvar_filter_threshold: 0
         flash: false
