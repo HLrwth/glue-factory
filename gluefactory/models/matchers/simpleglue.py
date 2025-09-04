@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import nn
 
-from ...settings import DATA_PATH
+from ...settings import DATA_PATH, root
 from ..utils.losses import NLLLoss
 from ..utils.metrics import matcher_metrics
 
@@ -59,7 +59,7 @@ class EmCrossEntropyLoss(nn.Module):
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
 
         loss_rp_all = (loss_rp_01 + loss_rp_10) / 2.0
-        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) / 2.0
+        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) * 5.0
 
         return loss_rp_all, loss_logvar_all
 
@@ -376,6 +376,11 @@ class SimpleGlue(nn.Module):
             # weights can be either a path or an existing file from official LG
             if Path(conf.weights).exists():
                 state_dict = torch.load(conf.weights, map_location="cpu")
+            elif (root / conf.weights).exists():
+                state_dict = torch.load(
+                    str(root / conf.weights), map_location="cpu"
+                )["model"]
+                state_dict = {k.replace("matcher.", ""): v for k, v in state_dict.items() if "matcher." in k}
             elif (Path(DATA_PATH) / conf.weights).exists():
                 state_dict = torch.load(
                     str(DATA_PATH / conf.weights), map_location="cpu"
