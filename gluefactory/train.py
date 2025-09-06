@@ -12,19 +12,21 @@ import signal
 from collections import defaultdict
 from pathlib import Path
 from pydoc import locate
+import subprocess
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
 
 import numpy as np
 import torch
 from omegaconf import OmegaConf
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from . import __module_name__, logger
+from . import __module_name__, logger, settings
 from .datasets import get_dataset
 from .eval import run_benchmark
 from .models import get_model
-from .settings import EVAL_PATH, TRAINING_PATH
 from .utils.experiments import get_best_checkpoint, get_last_checkpoint, save_experiment
 from .utils.stdout_capturing import capture_outputs
 from .utils.tensor import batch_to_device
@@ -44,7 +46,7 @@ default_train_conf = {
     "seed": "???",  # training seed
     "epochs": 1,  # number of epochs
     "start_epoch_tr_logvar": 0,  # epoch to start training logvar
-    "optimizer": "adam",  # name of optimizer in [adam, sgd, rmsprop]
+    "optimizer": "adamw",  # name of optimizer in [adam, sgd, rmsprop]
     "opt_regexp": None,  # regular expression to filter parameters to optimize
     "optimizer_options": {},  # optional arguments passed to the optimizer
     "lr": 0.001,  # learning rate
@@ -79,17 +81,18 @@ default_train_conf = OmegaConf.create(default_train_conf)
 
 
 @torch.no_grad()
-def do_evaluation(model, loader, device, loss_fn, conf, rank, pbar=True):
+def do_evaluation(model, loader, device, loss_fn, conf, rank, tr_logvar, pbar=True):
     model.eval()
     results = {}
     pr_metrics = defaultdict(PRMetric)
     figures = []
-    if conf.plot is not None and rank == 0:
+    if conf.plot is not None:
         n, plot_fn = conf.plot
         plot_ids = np.random.choice(len(loader), min(len(loader), n), replace=False)
     for i, data in enumerate(
         tqdm(loader, desc="Evaluation", ascii=True, disable=not pbar)
     ):
+        data.update({'tr_logvar': tr_logvar})
         data = batch_to_device(data, device, non_blocking=True)
         with torch.no_grad():
             pred = model(data)
@@ -215,9 +218,11 @@ def write_image_summaries(writer, name, figures, step):
         for i, figs in enumerate(figures):
             for k, fig in figs.items():
                 writer.add_figure(f"{name}/{i}_{k}", fig, step)
+                plt.close(fig)
     else:
-        for k, fig in figs.items():
+        for k, fig in figures.items():
             writer.add_figure(f"{name}/{k}", fig, step)
+            plt.close(fig)
 
 
 def training(rank, conf, output_dir, args):
@@ -228,14 +233,18 @@ def training(rank, conf, output_dir, args):
         except AssertionError:
             init_cp = get_best_checkpoint(args.experiment)
         logger.info(f"Restoring from checkpoint {init_cp.name}")
-        init_cp = torch.load(str(init_cp), map_location="cpu")
+        init_cp = torch.load(
+            str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+        )
         conf = OmegaConf.merge(OmegaConf.create(init_cp["conf"]), conf)
         conf.train = OmegaConf.merge(default_train_conf, conf.train)
         epoch = init_cp["epoch"] + 1
 
         # get the best loss or eval metric from the previous best checkpoint
         best_cp = get_best_checkpoint(args.experiment)
-        best_cp = torch.load(str(best_cp), map_location="cpu")
+        best_cp = torch.load(
+            str(best_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+        )
         best_eval = best_cp["eval"][conf.train.best_key]
         del best_cp
     else:
@@ -251,7 +260,9 @@ def training(rank, conf, output_dir, args):
             except AssertionError:
                 init_cp = get_best_checkpoint(conf.train.load_experiment)
             # init_cp = get_last_checkpoint(conf.train.load_experiment)
-            init_cp = torch.load(str(init_cp), map_location="cpu")
+            init_cp = torch.load(
+                str(init_cp), map_location="cpu", weights_only=not settings.ALLOW_PICKLE
+            )
             # load the model config of the old setup, and overwrite with current config
             conf.model = OmegaConf.merge(
                 OmegaConf.create(init_cp["conf"]).model, conf.model
@@ -356,7 +367,12 @@ def training(rank, conf, output_dir, args):
     optimizer = optimizer_fn(
         lr_params, lr=conf.train.lr, **conf.train.optimizer_options
     )
-    scaler = GradScaler(enabled=args.mixed_precision is not None)
+    use_mp = args.mixed_precision is not None
+    scaler = (
+        torch.amp.GradScaler("cuda", enabled=use_mp)
+        if hasattr(torch.amp, "GradScaler")
+        else torch.cuda.amp.GradScaler(enabled=use_mp)
+    )
     logger.info(f"Training with mixed_precision={args.mixed_precision}")
 
     mp_dtype = {
@@ -366,7 +382,7 @@ def training(rank, conf, output_dir, args):
     }[args.mixed_precision]
 
     results = None  # fix bug with it saving
-
+    
     lr_scheduler_conf = {
         'options': {
             'epochs': conf.train.epochs,
@@ -403,6 +419,8 @@ def training(rank, conf, output_dir, args):
             with_stack=True,
         )
         prof.__enter__()
+
+    tr_logvar = False
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
             logger.info(f"Starting epoch {epoch}")
@@ -415,16 +433,19 @@ def training(rank, conf, output_dir, args):
         ):
             for bname, eval_conf in conf.get("benchmarks", {}).items():
                 logger.info(f"Running eval on {bname}")
-                results, figures, _ = run_benchmark(
+                summaries, figures, _ = run_benchmark(
                     bname,
                     eval_conf,
-                    EVAL_PATH / bname / args.experiment / str(epoch),
+                    settings.EVAL_PATH / bname / args.experiment / str(epoch),
                     model.eval(),
                 )
-                logger.info(str(results))
-                write_dict_summaries(writer, f"test/{bname}", results, epoch)
+                str_summaries = [
+                    f"{k} {v:.3E}" for k, v in summaries.items() if isinstance(v, float)
+                ]
+                logger.info(f'[{bname}] {{{", ".join(str_summaries)}}}')
+                write_dict_summaries(writer, f"test/{bname}", summaries, epoch)
                 write_image_summaries(writer, f"figures/{bname}", figures, epoch)
-                del results, figures
+                del summaries, figures
 
         # set the seed
         set_seed(conf.train.seed + epoch)
@@ -452,9 +473,9 @@ def training(rank, conf, output_dir, args):
                         conf.train.seed + epoch
                     )
         for it, data in enumerate(train_loader):
-            data.update({'tr_logvar': False})
             if epoch >= conf.train.start_epoch_tr_logvar:
-                data.update({'tr_logvar': True})
+                tr_logvar = True
+            data.update({'tr_logvar': tr_logvar})
             tot_it = (len(train_loader) * epoch + it) * (
                 args.n_gpus if args.distributed else 1
             )
@@ -466,7 +487,11 @@ def training(rank, conf, output_dir, args):
             model.train()
             optimizer.zero_grad()
 
-            with autocast(enabled=args.mixed_precision is not None, dtype=mp_dtype):
+            with torch.autocast(
+                device_type="cuda" if torch.cuda.is_available() else "cpu",
+                enabled=args.mixed_precision is not None,
+                dtype=mp_dtype,
+            ):
                 data = batch_to_device(data, device, non_blocking=True)
                 pred = model(data)
                 losses, _ = loss_fn(pred, data)
@@ -493,6 +518,10 @@ def training(rank, conf, output_dir, args):
                         if param.grad is None and param.requires_grad:
                             print(f"param {name} has no gradient.")
                             detected_anomaly = True
+                        if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                            print(f"param {name} has NaN or Inf in grad.")
+                            detected_anomaly = True
+                            
                     if detected_anomaly:
                         raise RuntimeError("Detected anomaly in training.")
                 if conf.train.get("clip_grad", None):
@@ -505,7 +534,7 @@ def training(rank, conf, output_dir, args):
                         )
                         scaler.step(optimizer)
                     except RuntimeError:
-                        logger.warning("NaN detected in gradients. Skipping iteration.")
+                        logger.warning(f"NaN detected in gradients. Skipping iteration {it}.")
                     scaler.update()
                 else:
                     scaler.step(optimizer)
@@ -520,6 +549,9 @@ def training(rank, conf, output_dir, args):
                 prof.step()
 
             if it % conf.train.log_every_iter == 0:
+                # Print vram useage
+                # max_mem = torch.cuda.max_memory_allocated(rank) / 1024**2
+                # print(f"Rank {rank}: {max_mem:.2f} MB")
                 for k in sorted(losses.keys()):
                     if args.distributed:
                         losses[k] = losses[k].sum(-1)
@@ -556,13 +588,13 @@ def training(rank, conf, output_dir, args):
             del pred, data, loss, losses
 
             # Run validation
-            if (False
-                # (
-                #     it % conf.train.eval_every_iter == 0
-                #     and (it > 0 or epoch == -int(args.no_eval_0))
-                # )
-                # or stop
-                # or it == (len(train_loader) - 1)
+            if (
+                (
+                    it % conf.train.eval_every_iter == 0
+                    and (it > 0 or epoch == -int(args.no_eval_0))
+                )
+                or stop
+                or it == (len(train_loader) - 1)
             ):
                 with fork_rng(seed=conf.train.seed):
                     results, pr_metrics, figures = do_evaluation(
@@ -572,7 +604,8 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        tr_logvar,
+                        pbar=(rank == 0),
                     )
 
                 if rank == 0:
@@ -604,7 +637,6 @@ def training(rank, conf, output_dir, args):
                         )
                         logger.info(f"New best val: {conf.train.best_key}={best_eval}")
                 torch.cuda.empty_cache()  # should be cleared at the first iter
-                del results, pr_metrics, figures
 
             if (tot_it % conf.train.save_every_iter == 0 and tot_it > 0) and rank == 0:
                 if results is None:
@@ -615,7 +647,8 @@ def training(rank, conf, output_dir, args):
                         loss_fn,
                         conf.train,
                         rank,
-                        pbar=(rank == -1),
+                        tr_logvar,
+                        pbar=(rank == 0),
                     )
                     best_eval = results[conf.train.best_key]
                 best_eval = save_experiment(
@@ -631,7 +664,6 @@ def training(rank, conf, output_dir, args):
                     stop,
                     args.distributed,
                 )
-
             if stop:
                 break
 
@@ -650,6 +682,7 @@ def training(rank, conf, output_dir, args):
                 distributed=args.distributed,
             )
 
+        results = None  # free memory
         epoch += 1
 
     logger.info(f"Finished training on process {rank}.")
@@ -659,7 +692,9 @@ def training(rank, conf, output_dir, args):
 
 def main_worker(rank, conf, output_dir, args):
     if rank == 0:
-        with capture_outputs(output_dir / "log.txt"):
+        with capture_outputs(
+            output_dir / "log.txt", cleanup_interval=args.cleanup_interval
+        ):
             training(rank, conf, output_dir, args)
     else:
         training(rank, conf, output_dir, args)
@@ -682,6 +717,11 @@ if __name__ == "__main__":
         type=str,
         choices=["default", "reduce-overhead", "max-autotune"],
     )
+    parser.add_argument(
+        "--cleanup_interval",
+        default=120,  # Cleanup log files every 120 seconds.
+        type=int,
+    )
     parser.add_argument("--overfit", action="store_true")
     parser.add_argument("--restore", action="store_true")
     parser.add_argument("--distributed", action="store_true")
@@ -695,12 +735,20 @@ if __name__ == "__main__":
     args = parser.parse_intermixed_args()
 
     logger.info(f"Starting experiment {args.experiment}")
-    output_dir = Path(TRAINING_PATH, args.experiment)
+    output_dir = Path(settings.TRAINING_PATH, args.experiment)
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    # Get current commit hash
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+    commit_file = output_dir / "commit_hash.txt"
+    print('Current commit hash:', commit)
+    commit_file.write_text(commit + "\n")
 
     conf = OmegaConf.from_cli(args.dotlist)
     if args.conf:
-        conf = OmegaConf.merge(OmegaConf.load(args.conf), conf)
+        yaml_conf = OmegaConf.load(args.conf)
+        OmegaConf.resolve(yaml_conf)
+        conf = OmegaConf.merge(yaml_conf, conf)
     elif args.restore:
         restore_conf = OmegaConf.load(output_dir / "config.yaml")
         conf = OmegaConf.merge(restore_conf, conf)
@@ -713,7 +761,6 @@ if __name__ == "__main__":
     for module in conf.train.get("submodules", []) + [__module_name__]:
         mod_dir = Path(__import__(str(module)).__file__).parent
         shutil.copytree(mod_dir, output_dir / module, dirs_exist_ok=True)
-
     if args.distributed:
         args.n_gpus = torch.cuda.device_count()
         args.lock_file = output_dir / "distributed_lock"

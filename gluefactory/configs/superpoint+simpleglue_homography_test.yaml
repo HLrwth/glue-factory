@@ -10,7 +10,7 @@ data:
         difficulty: 0.7
         max_angle: 45
     photometric:
-        name: lg
+        name: identity
 model:
     name: two_view_pipeline
     extractor:
