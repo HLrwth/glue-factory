@@ -27,4 +27,4 @@ git commit -m "homography_reproduce_newcode"
 
 source ~/.bashrc
 srun /mnt/lustre/work/bamler/zxiao29/.miniconda3/envs/haolong/bin/python -m gluefactory.train homography_reproduce_newcode --conf gluefactory/configs/superpoint+simpleglue_homography.yaml  \
-            model.matcher.checkpointed=True train.lr_schedule.on_epoch=false train.clip_grad=10 model.matcher.weights=superpoint_lightglue
+            model.matcher.checkpointed=True train.lr_schedule.on_epoch=false train.clip_grad=10 model.matcher.weights=superpoint_lightglue model.matcher.flash=false
