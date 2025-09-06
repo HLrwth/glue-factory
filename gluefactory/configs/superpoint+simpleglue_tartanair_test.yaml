@@ -26,7 +26,6 @@ model:
         th_negative: 5
         th_epi: 5
         min_depth: 1e-4
-        relaxed_bd: 640
     matcher:
         name: matchers.simpleglue
         filter_threshold: 0.1
