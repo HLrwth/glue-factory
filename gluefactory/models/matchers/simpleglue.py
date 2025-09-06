@@ -440,7 +440,7 @@ class SimpleGlue(nn.Module):
             else:
                 if 'lightglue' in conf.weights and self.training:
                     self.url = "https://github.com/cvg/LightGlue/releases/download/{}/{}.pth"
-                    pprint(f"Initialize state from lightglue for training")
+                    print(f"Initialize state from lightglue for training")
                 fname = (
                     f"{conf.weights}_{conf.weights_from_version}".replace(".", "-")
                     + ".pth"
