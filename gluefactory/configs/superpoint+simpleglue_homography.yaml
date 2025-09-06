@@ -28,7 +28,7 @@ model:
         weights: superpoint_lightglue  # This will initalize from ligthglue weights
         filter_threshold: 0.1
         logvar_filter_threshold: 1.5
-        flash: true
+        flash: false
         checkpointed: false
 train:
     seed: 0
