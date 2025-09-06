@@ -26,6 +26,8 @@ model:
         th_negative: 3
     matcher:
         name: matchers.simpleglue
+        # weights: superpoint_lightglue  # This will initalize from ligthglue weights
+        weights: ckpt/sp+sg_homography_initlg_onecyclelr_correctdata/checkpoint_38_45000.tar
         filter_threshold: 0.1
         logvar_filter_threshold: 0
         flash: false
@@ -34,7 +36,7 @@ train:
     seed: 0
     epochs: 10000
     log_every_iter: 1
-    eval_every_iter: 500
+    eval_every_iter: 1
     lr: 1e-4
     clip_grad: 10
     lr_schedule:
