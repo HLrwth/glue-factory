@@ -378,7 +378,7 @@ class SimpleGlue(nn.Module):
                 state_dict = torch.load(conf.weights, map_location="cpu")
             elif (root / conf.weights).exists():
                 state_dict = torch.load(
-                    str(root / conf.weights), map_location="cpu"
+                    str(root / conf.weights), map_location="cpu", weights_only=False
                 )["model"]
                 state_dict = {k.replace("matcher.", ""): v for k, v in state_dict.items() if "matcher." in k}
             elif (Path(DATA_PATH) / conf.weights).exists():
