@@ -186,9 +186,9 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     scale1_0_sq = (1000 / size0.max(-1).values)**2
     res0_1_sq = res0_1_sq * scale0_1_sq[..., None, None, None]
     res1_0_sq = res1_0_sq * scale1_0_sq[..., None, None, None]
-    MAX_RES_SQ = res0_1_sq.new_tensor(MAX_RES_SQ)
-    res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < MAX_RES_SQ), res0_1_sq, MAX_RES_SQ)
-    res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < MAX_RES_SQ), res1_0_sq, MAX_RES_SQ)
+    max_res_sq = res0_1_sq.new_tensor(MAX_RES_SQ)
+    res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < max_res_sq), res0_1_sq, max_res_sq)
+    res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < max_res_sq), res1_0_sq, max_res_sq)
 
     return {
         "assignment": positive,
