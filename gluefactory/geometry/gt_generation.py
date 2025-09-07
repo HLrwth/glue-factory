@@ -9,7 +9,7 @@ from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 400
+MAX_RES_SQ = 40000
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
@@ -183,8 +183,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0.unsqueeze(1) - 1)), dim=-1)
     scale0_1_sq = (size1.max(-1).values / 2)**2
     scale1_0_sq = (size0.max(-1).values / 2)**2
-    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 100
-    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 100
+    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 10000
+    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 10000
     res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
     res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
 
