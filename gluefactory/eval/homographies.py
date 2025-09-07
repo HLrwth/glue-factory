@@ -324,7 +324,7 @@ if __name__ == "__main__":
 
     default_conf = OmegaConf.create(HomographiesValPipeline.default_conf)
 
-    set_seed(0)
+    # set_seed(0)
 
     # mingle paths
     output_dir = Path(EVAL_PATH, dataset_name)
