@@ -9,7 +9,7 @@ from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 40000
+MAX_RES_SQ = 400
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
@@ -128,6 +128,7 @@ def gt_matches_from_pose_depth(
 
 
 @torch.no_grad()
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
 def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     assert kp0.shape[1] != 0 and kp1.shape[1] != 0
     if kp0.shape[1] == 0 or kp1.shape[1] == 0:
@@ -177,16 +178,17 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     valid0_1 = torch.ones_like(kp0_1[..., 0], device=kp0_1.device, dtype=torch.bool)
     valid1_0 = torch.ones_like(kp1_0[..., 0], device=kp1_0.device, dtype=torch.bool)
 
-    size0 = kw["image_size0"].to(res0_1_sq.device)
-    size1 = kw["image_size1"].to(res1_0_sq.device)
+    size0 = kw["image_size0"].to(res0_1_sq.device).float()
+    size1 = kw["image_size1"].to(res1_0_sq.device).float()
     visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1.unsqueeze(1) - 1)), dim=-1)
     visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0.unsqueeze(1) - 1)), dim=-1)
-    scale0_1_sq = (size1.max(-1).values / 2)**2
-    scale1_0_sq = (size0.max(-1).values / 2)**2
-    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 10000
-    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 10000
-    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
-    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
+    scale0_1_sq = (1000 / size1.max(-1).values)**2
+    scale1_0_sq = (1000 / size0.max(-1).values)**2
+    res0_1_sq = res0_1_sq * scale0_1_sq[..., None, None, None]
+    res1_0_sq = res1_0_sq * scale1_0_sq[..., None, None, None]
+    MAX_RES_SQ = res0_1_sq.new_tensor(MAX_RES_SQ)
+    res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < MAX_RES_SQ), res0_1_sq, MAX_RES_SQ)
+    res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < MAX_RES_SQ), res1_0_sq, MAX_RES_SQ)
 
     return {
         "assignment": positive,
