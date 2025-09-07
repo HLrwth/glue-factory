@@ -9,7 +9,7 @@ from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 400
+MAX_RES_SQ = 40000
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
