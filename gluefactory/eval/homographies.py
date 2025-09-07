@@ -15,6 +15,7 @@ from ..models.utils.metrics import matcher_metrics
 from ..settings import EVAL_PATH
 from ..utils.export_predictions import export_predictions
 from ..utils.tensor import map_tensor, batch_to_device
+from ..utils.tools import set_seed
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
 
@@ -27,9 +28,9 @@ class HomographiesValPipeline(EvalPipeline):
     default_conf = {
         "data": {
             "name": "homographies",
-            "data_dir": "revisitop1m_debug",
-            "train_size": 1,
-            "val_size": 10,
+            "data_dir": "revisitop1m",
+            "train_size": 150000,
+            "val_size": 2000,
             "batch_size": 1,
             "num_workers": 1,
             "homography": {
@@ -87,7 +88,7 @@ class HomographiesValPipeline(EvalPipeline):
         # },
         "eval": {
             "filter_threshold": [0, 0.1, 0.2],  # visual matching threshold
-            "logvar_filter_threshold": [-1, -0.5, 0, 0.5, 1, 1.5, 2, 3],  # uncertainty threshold
+            "logvar_filter_threshold": [-7.5, -7.3, -7, -6.5, -6, -5.5, -5, -4, 1.5],  # uncertainty threshold
         },
     }
     export_keys = [
@@ -322,6 +323,8 @@ if __name__ == "__main__":
     args = parser.parse_intermixed_args()
 
     default_conf = OmegaConf.create(HomographiesValPipeline.default_conf)
+
+    set_seed(0)
 
     # mingle paths
     output_dir = Path(EVAL_PATH, dataset_name)
