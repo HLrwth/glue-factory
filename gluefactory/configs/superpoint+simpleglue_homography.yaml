@@ -44,10 +44,10 @@ train:
         options:
             epochs: 40
             steps_per_epoch: 500
-            max_lr: 3e-4
+            max_lr: 1e-4
             pct_start: 0.1
-            anneal_strategy: cos
-            cycle_momentum: True
+            anneal_strategy: linear
+            cycle_momentum: False
             div_factor: 10
             final_div_factor: 10000
         on_epoch: true
