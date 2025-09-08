@@ -37,16 +37,17 @@ train:
     log_every_iter: 100
     eval_every_iter: 500
     lr: 1e-4
+    clip_grad: 10
     lr_schedule:
         start: 20
         type: OneCycleLR
         options:
             epochs: 40
             steps_per_epoch: 500
-            max_lr: 1e-4
+            max_lr: 3e-4
             pct_start: 0.1
-            anneal_strategy: linear
-            cycle_momentum: False
+            anneal_strategy: cos
+            cycle_momentum: True
             div_factor: 10
             final_div_factor: 10000
         on_epoch: true
