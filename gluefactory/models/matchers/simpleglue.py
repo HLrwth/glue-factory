@@ -24,6 +24,11 @@ def make_check_grad(name):
             print(f"Inf in gradients of {name}!")
     return check_grad
 
+def print_grad(name):
+    def print_grad_(grad):
+        print(f"{name} grad: {grad.norm()}")
+    return print_grad_
+
 class EmCrossEntropyLoss(nn.Module):
     def __init__(self):
         super().__init__()
