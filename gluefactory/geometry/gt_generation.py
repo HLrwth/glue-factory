@@ -5,11 +5,10 @@ from scipy.optimize import linear_sum_assignment
 from .depth import project, sample_depth
 from .epipolar import T_to_E, sym_epipolar_distance_all
 from .homography import warp_points_torch
-from .wrappers import Camera
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 40000
+MAX_RES_SQ = 10000
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
