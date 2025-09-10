@@ -298,6 +298,8 @@ class ReprojLikelihood(nn.Module):
         sim_t = sim.transpose(-1, -2).contiguous()
         p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2)
 
+        # desc0.register_hook(print_grad("desc0"))
+        # desc1.register_hook(print_grad("desc1"))
         logvar_01 = self.logvar_proj(desc0)
         logvar_10 = self.logvar_proj(desc1)
 
