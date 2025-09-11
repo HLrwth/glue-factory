@@ -64,7 +64,7 @@ class EmCrossEntropyLoss(nn.Module):
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
 
         loss_rp_all = (loss_rp_01 + loss_rp_10) / 2.0
-        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) / 2.0
+        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) * 5.0
 
         return loss_rp_all, loss_logvar_all
 
