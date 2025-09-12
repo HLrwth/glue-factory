@@ -181,13 +181,13 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     size1 = kw["image_size1"].to(res1_0_sq.device).float()
     visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1.unsqueeze(1) - 1)), dim=-1)
     visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0.unsqueeze(1) - 1)), dim=-1)
-    scale0_1_sq = (1000 / size1.max(-1).values)**2
-    scale1_0_sq = (1000 / size0.max(-1).values)**2
+    scale0_1_sq = (10000 / size1.max(-1).values)**2
+    scale1_0_sq = (10000 / size0.max(-1).values)**2
     res0_1_sq = res0_1_sq * scale0_1_sq[..., None, None, None]
     res1_0_sq = res1_0_sq * scale1_0_sq[..., None, None, None]
-    # max_res_sq = res0_1_sq.new_tensor(MAX_RES_SQ)
-    # res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < max_res_sq), res0_1_sq, max_res_sq)
-    # res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < max_res_sq), res1_0_sq, max_res_sq)
+    max_res_sq = res0_1_sq.new_tensor(MAX_RES_SQ)
+    res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < max_res_sq), res0_1_sq, max_res_sq)
+    res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < max_res_sq), res1_0_sq, max_res_sq)
 
     return {
         "assignment": positive,
