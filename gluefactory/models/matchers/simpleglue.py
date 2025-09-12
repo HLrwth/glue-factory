@@ -64,7 +64,7 @@ class EmCrossEntropyLoss(nn.Module):
         loss_logvar_10 = (logvar_10.mean(-1) * valid1_0).sum(-1) / valid1_0_num
 
         loss_rp_all = (loss_rp_01 + loss_rp_10) / 2.0
-        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) * 5.0
+        loss_logvar_all = (loss_logvar_01 + loss_logvar_10) / 2.0
 
         return loss_rp_all, loss_logvar_all
 
@@ -298,8 +298,8 @@ class ReprojLikelihood(nn.Module):
         sim_t = sim.transpose(-1, -2).contiguous()
         p_rp_10 = F.softmax((sim_t - sim_t.max(2, keepdim = True).values), 2)
 
-        desc0.register_hook(print_grad("desc0"))
-        desc1.register_hook(print_grad("desc1"))
+        # desc0.register_hook(print_grad("desc0"))
+        # desc1.register_hook(print_grad("desc1"))
         logvar_01 = self.logvar_proj(desc0)
         logvar_10 = self.logvar_proj(desc1)
 
