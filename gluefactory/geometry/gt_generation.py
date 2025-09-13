@@ -8,7 +8,7 @@ from .homography import warp_points_torch
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
-MAX_RES_SQ = 1000
+MAX_RES_SQ = 400
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
