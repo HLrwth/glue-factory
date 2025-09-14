@@ -8,10 +8,12 @@ from .homography import warp_points_torch
 
 IGNORE_FEATURE = -2
 UNMATCHED_FEATURE = -1
+RESCALE = 1024
 MAX_RES_SQ = 400
 MIN_DEPTH = 0.05
 
 @torch.no_grad()
+@torch.amp.custom_fwd(cast_inputs=torch.float32, device_type='cuda')
 def gt_matches_from_pose_depth(
     kp0, kp1, data, pos_th=3, neg_th=5, epi_th=None, cc_th=None, **kw
 ):
@@ -99,12 +101,13 @@ def gt_matches_from_pose_depth(
     assert torch.numel(camera0.dist) == 0 and torch.numel(camera1.dist) == 0
     valid0_1 = valid0 & (d0 > MIN_DEPTH)
     valid1_0 = valid1 & (d1 > MIN_DEPTH)
-    scale0_1_sq = (camera1.size.max(-1).values / 2)**2
-    scale1_0_sq = (camera0.size.max(-1).values / 2)**2
-    res0_1_sq = res0_1_sq / scale0_1_sq[..., None, None, None] * 10000
-    res1_0_sq = res1_0_sq / scale1_0_sq[..., None, None, None] * 10000
-    res0_1_sq = torch.where(visible0[..., None, None], res0_1_sq, MAX_RES_SQ)
-    res1_0_sq = torch.where(visible1[..., None, None], res1_0_sq, MAX_RES_SQ)
+    scale0_1_sq = (RESCALE / camera1.size.max(-1).values)**2
+    scale1_0_sq = (RESCALE / camera0.size.max(-1).values)**2
+    res0_1_sq = res0_1_sq * scale0_1_sq[..., None, None, None]
+    res1_0_sq = res1_0_sq * scale1_0_sq[..., None, None, None]
+    max_res_sq = res0_1_sq.new_tensor(MAX_RES_SQ)
+    res0_1_sq = torch.where(visible0[..., None, None] & (res0_1_sq < max_res_sq), res0_1_sq, max_res_sq)
+    res1_0_sq = torch.where(visible1[..., None, None] & (res1_0_sq < max_res_sq), res1_0_sq, max_res_sq)
 
     return {
         "assignment": positive,
@@ -181,8 +184,8 @@ def gt_matches_from_homography(kp0, kp1, H, pos_th=3, neg_th=6, **kw):
     size1 = kw["image_size1"].to(res1_0_sq.device).float()
     visible0 = torch.all((kp0_1 >= 0) & (kp0_1 <= (size1.unsqueeze(1) - 1)), dim=-1)
     visible1 = torch.all((kp1_0 >= 0) & (kp1_0 <= (size0.unsqueeze(1) - 1)), dim=-1)
-    scale0_1_sq = (1000 / size1.max(-1).values)**2
-    scale1_0_sq = (1000 / size0.max(-1).values)**2
+    scale0_1_sq = (RESCALE / size1.max(-1).values)**2
+    scale1_0_sq = (RESCALE / size0.max(-1).values)**2
     res0_1_sq = res0_1_sq * scale0_1_sq[..., None, None, None]
     res1_0_sq = res1_0_sq * scale1_0_sq[..., None, None, None]
     max_res_sq = res0_1_sq.new_tensor(MAX_RES_SQ)
